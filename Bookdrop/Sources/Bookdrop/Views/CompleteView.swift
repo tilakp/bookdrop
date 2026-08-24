@@ -19,7 +19,7 @@ struct CompleteView: View {
             Text(info.outputURL.lastPathComponent)
                 .foregroundStyle(.secondary)
 
-            Text("\(info.fileSizeDisplay) · \(info.pageCount) page\(info.pageCount == 1 ? "" : "s")")
+            Text(summaryText)
                 .font(.callout)
                 .foregroundStyle(.secondary)
 
@@ -29,7 +29,7 @@ struct CompleteView: View {
                 }
                 .buttonStyle(.bordered)
 
-                Button("Open PDF") {
+                Button("Open \(info.outputURL.pathExtension.uppercased())") {
                     NSWorkspace.shared.open(info.outputURL)
                 }
                 .buttonStyle(.borderedProminent)
@@ -46,5 +46,12 @@ struct CompleteView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color(nsColor: .windowBackgroundColor))
+    }
+
+    private var summaryText: String {
+        if let pageCount = info.pageCount {
+            return "\(info.fileSizeDisplay) · \(pageCount) page\(pageCount == 1 ? "" : "s")"
+        }
+        return info.fileSizeDisplay
     }
 }

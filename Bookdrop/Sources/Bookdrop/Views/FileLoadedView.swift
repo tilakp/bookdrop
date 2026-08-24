@@ -5,6 +5,7 @@ import UniformTypeIdentifiers
 struct FileLoadedView: View {
     let book: Book
     @Binding var options: PDFOptions
+    @Binding var format: OutputFormat
     @Binding var outputDirectory: URL
     @ObservedObject var settingsStore: SettingsStore
     var onBack: () -> Void
@@ -20,9 +21,14 @@ struct FileLoadedView: View {
                 VStack(alignment: .leading, spacing: 20) {
                     bookRow
                     outputSection
-                    pdfOptionsSection
-                    if showAdvanced {
-                        AdvancedOptionsView(options: $options)
+                    if format.supportsCoverAndTOC {
+                        generalOptionsSection
+                    }
+                    if format.hasPdfOptions {
+                        pdfOptionsSection
+                        if showAdvanced {
+                            AdvancedOptionsView(options: $options)
+                        }
                     }
                 }
                 .padding(20)
@@ -105,8 +111,10 @@ struct FileLoadedView: View {
                 .foregroundStyle(.secondary)
 
             LabeledContent("Format") {
-                Picker("", selection: .constant(0)) {
-                    Text("PDF").tag(0)
+                Picker("", selection: $format) {
+                    ForEach(OutputFormat.allCases) { format in
+                        Text(format.rawValue).tag(format)
+                    }
                 }
                 .labelsHidden()
                 .frame(width: 160)
@@ -121,6 +129,16 @@ struct FileLoadedView: View {
                     Button("Choose…", action: chooseOutputDirectory)
                 }
             }
+        }
+    }
+
+    private var generalOptionsSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Options")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.secondary)
+            Toggle("Include cover", isOn: $options.includeCover)
+            Toggle("Generate table of contents", isOn: $options.generateTableOfContents)
         }
     }
 
@@ -148,6 +166,19 @@ struct FileLoadedView: View {
                 .frame(width: 160)
             }
 
+            if options.pageSize == .custom {
+                LabeledContent("Width (in)") {
+                    TextField("", value: $options.customPageWidthInches, format: .number)
+                        .frame(width: 60)
+                        .multilineTextAlignment(.trailing)
+                }
+                LabeledContent("Height (in)") {
+                    TextField("", value: $options.customPageHeightInches, format: .number)
+                        .frame(width: 60)
+                        .multilineTextAlignment(.trailing)
+                }
+            }
+
             LabeledContent("Margins") {
                 Picker("", selection: $options.margins) {
                     ForEach(PageMargins.allCases) { margin in
@@ -167,9 +198,6 @@ struct FileLoadedView: View {
                 .labelsHidden()
                 .frame(width: 160)
             }
-
-            Toggle("Include cover", isOn: $options.includeCover)
-            Toggle("Generate table of contents", isOn: $options.generateTableOfContents)
         }
     }
 

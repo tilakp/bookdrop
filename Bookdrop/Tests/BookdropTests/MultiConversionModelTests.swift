@@ -18,7 +18,7 @@ final class MultiConversionModelTests: XCTestCase {
         // "Keep Both"-style auto-numbering since both books share a title.
         let model = MultiConversionModel(urls: [fixtureURL(), fixtureURL()], outputDirectory: outputDir)
 
-        await model.run(options: PDFOptions(), historyStore: history)
+        await model.run(options: PDFOptions(), format: .pdf, historyStore: history)
 
         XCTAssertEqual(model.completedCount, 2)
         XCTAssertTrue(model.isFinished)
@@ -41,11 +41,33 @@ final class MultiConversionModelTests: XCTestCase {
 
         let model = MultiConversionModel(urls: [fixtureURL()], outputDirectory: outputDir)
         model.cancelAll()
-        await model.run(options: PDFOptions(), historyStore: history)
+        await model.run(options: PDFOptions(), format: .pdf, historyStore: history)
 
         guard case .failed = model.jobs[0].status else {
             XCTFail("expected cancelled job to be marked failed, got \(model.jobs[0].status)")
             return
         }
+    }
+
+    func testConvertsMultipleFilesToNonPDFFormat() async throws {
+        let outputDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("MultiConversionModelTests-\(UUID().uuidString)")
+        let historyDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("MultiConversionModelTests-history-\(UUID().uuidString)")
+        let history = HistoryStore(directory: historyDir)
+
+        let model = MultiConversionModel(urls: [fixtureURL(), fixtureURL()], outputDirectory: outputDir)
+        await model.run(options: PDFOptions(), format: .html, historyStore: history)
+
+        XCTAssertEqual(model.completedCount, 2)
+        for job in model.jobs {
+            guard case .done(let url) = job.status else {
+                XCTFail("expected job to be done, got \(job.status)")
+                continue
+            }
+            XCTAssertEqual(url.pathExtension, "html")
+            XCTAssertTrue(FileManager.default.fileExists(atPath: url.path))
+        }
+        XCTAssertTrue(history.entries.allSatisfy { $0.conversionLabel == "EPUB → HTML" })
     }
 }

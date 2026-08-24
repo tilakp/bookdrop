@@ -9,6 +9,7 @@ import PDFKit
 final class AppCoordinator: ObservableObject {
     @Published var screen: AppScreen = .empty
     @Published var pdfOptions = PDFOptions()
+    @Published var outputFormat: OutputFormat = .pdf
     @Published var outputDirectory: URL
 
     let historyStore: HistoryStore
@@ -68,7 +69,8 @@ final class AppCoordinator: ObservableObject {
 
     @discardableResult
     func beginConvert(book: Book) -> Task<Void, Never>? {
-        let candidate = outputDirectory.appendingPathComponent(sanitizedFilename(book.title) + ".pdf")
+        let candidate = outputDirectory.appendingPathComponent(
+            sanitizedFilename(book.title) + "." + outputFormat.fileExtension)
         if FileManager.default.fileExists(atPath: candidate.path) {
             screen = .duplicateConfirm(book: book, filename: candidate.lastPathComponent)
             return nil
@@ -84,11 +86,13 @@ final class AppCoordinator: ObservableObject {
             screen = .loaded(book)
             return nil
         case .replace:
-            let url = outputDirectory.appendingPathComponent(sanitizedFilename(book.title) + ".pdf")
+            let url = outputDirectory.appendingPathComponent(
+                sanitizedFilename(book.title) + "." + outputFormat.fileExtension)
             return startConversion(book: book, outputURL: url)
         case .keepBoth:
             let url = nextAvailableURL(
-                directory: outputDirectory, baseName: sanitizedFilename(book.title), extension: "pdf")
+                directory: outputDirectory, baseName: sanitizedFilename(book.title),
+                extension: outputFormat.fileExtension)
             return startConversion(book: book, outputURL: url)
         }
     }
@@ -111,13 +115,12 @@ final class AppCoordinator: ObservableObject {
     /// (bypassing the `Task` wrapper `startConversion` uses for fire-and-forget UI calls).
     func performConversion(book: Book, outputURL: URL, progress: ConversionProgress) async {
         do {
-            let resultURL = try await PdfConverter.convert(
-                book: book, options: pdfOptions, outputURL: outputURL, progress: progress)
-            let pageCount = PDFDocument(url: resultURL)?.pageCount ?? 0
+            let resultURL = try await convert(book: book, outputURL: outputURL, progress: progress)
+            let pageCount = outputFormat == .pdf ? PDFDocument(url: resultURL)?.pageCount : nil
             let info = CompletionInfo(outputURL: resultURL, pageCount: pageCount)
             historyStore.add(
                 HistoryEntry(
-                    title: book.title, conversionLabel: "EPUB → PDF",
+                    title: book.title, conversionLabel: "EPUB → \(outputFormat.rawValue)",
                     outputPath: resultURL.path, sourcePath: book.sourceURL.path))
 
             if performSideEffects {
@@ -136,15 +139,46 @@ final class AppCoordinator: ObservableObject {
             screen = .loaded(book)
         } catch PdfConverterError.cancelled {
             screen = .loaded(book)
-        } catch let error as PdfConverterError {
+        } catch let error as LocalizedError {
             screen = .error(
                 message: error.errorDescription ?? "Couldn't convert this book.",
-                hint: "Try enabling \u{201C}Preserve EPUB Styling\u{201D} or choose another output format.",
+                hint: outputFormat == .pdf
+                    ? "Try enabling \u{201C}Preserve EPUB Styling\u{201D} or choose another output format."
+                    : "Try another output format.",
                 technicalDetails: String(describing: error))
         } catch {
             screen = .error(
                 message: "Couldn't convert this book.", hint: nil,
                 technicalDetails: String(describing: error))
+        }
+    }
+
+    private func convert(book: Book, outputURL: URL, progress: ConversionProgress) async throws -> URL {
+        switch outputFormat {
+        case .pdf:
+            return try await PdfConverter.convert(
+                book: book, options: pdfOptions, outputURL: outputURL, progress: progress)
+        case .txt:
+            progress.stageText = "Converting…"
+            progress.fraction = 0.5
+            let url = try TxtConverter.convert(book: book, outputURL: outputURL)
+            progress.fraction = 1.0
+            return url
+        case .html:
+            progress.stageText = "Converting…"
+            progress.fraction = 0.5
+            let url = try HtmlConverter.convert(
+                book: book, includeCover: pdfOptions.includeCover,
+                generateTOC: pdfOptions.generateTableOfContents, outputURL: outputURL)
+            progress.fraction = 1.0
+            return url
+        case .docx:
+            progress.stageText = "Converting…"
+            progress.fraction = 0.5
+            let url = try DocxConverter.convert(
+                book: book, includeCover: pdfOptions.includeCover, outputURL: outputURL)
+            progress.fraction = 1.0
+            return url
         }
     }
 }

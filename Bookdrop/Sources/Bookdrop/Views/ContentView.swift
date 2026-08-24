@@ -30,6 +30,7 @@ struct ContentView: View {
                 FileLoadedView(
                     book: book,
                     options: $coordinator.pdfOptions,
+                    format: $coordinator.outputFormat,
                     outputDirectory: $coordinator.outputDirectory,
                     settingsStore: settingsStore,
                     onBack: { coordinator.screen = .empty },
@@ -52,7 +53,8 @@ struct ContentView: View {
                     onTryAgain: { coordinator.screen = .empty })
             case .multipleFiles(let model):
                 MultipleFilesView(
-                    model: model, options: coordinator.pdfOptions, historyStore: historyStore,
+                    model: model, options: coordinator.pdfOptions, format: $coordinator.outputFormat,
+                    historyStore: historyStore,
                     onDone: { coordinator.screen = .empty })
             }
         }

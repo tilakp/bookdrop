@@ -4,6 +4,7 @@ import AppKit
 struct MultipleFilesView: View {
     @ObservedObject var model: MultiConversionModel
     let options: PDFOptions
+    @Binding var format: OutputFormat
     let historyStore: HistoryStore
     var onDone: () -> Void
 
@@ -25,6 +26,18 @@ struct MultipleFilesView: View {
                     .background(RoundedRectangle(cornerRadius: 8).fill(Color(nsColor: .controlBackgroundColor)))
 
                     if !model.isRunning && !model.isFinished {
+                        HStack {
+                            Text("Convert all to")
+                            Picker("", selection: $format) {
+                                ForEach(OutputFormat.allCases) { format in
+                                    Text(format.rawValue).tag(format)
+                                }
+                            }
+                            .labelsHidden()
+                            .frame(width: 120)
+                        }
+                        .font(.callout)
+
                         HStack {
                             Text("Save to")
                             Spacer()
@@ -136,7 +149,7 @@ struct MultipleFilesView: View {
                     .buttonStyle(.bordered)
             } else {
                 Button("Convert All") {
-                    Task { await model.run(options: options, historyStore: historyStore) }
+                    Task { await model.run(options: options, format: format, historyStore: historyStore) }
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(Color.brandPurple)

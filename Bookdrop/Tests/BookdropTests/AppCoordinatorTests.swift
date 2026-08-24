@@ -23,20 +23,8 @@ final class AppCoordinatorTests: XCTestCase {
         return dir
     }
 
-    /// `UserDefaults(suiteName:)` writes a real plist under ~/Library/Preferences.
-    /// `removePersistentDomain` only clears the in-memory cache — cfprefsd doesn't
-    /// reliably unlink the file itself — so the teardown deletes it directly too.
-    private func scratchDefaults() -> UserDefaults {
-        let suiteName = "AppCoordinatorTests-\(UUID().uuidString)"
-        let defaults = UserDefaults(suiteName: suiteName)!
-        addTeardownBlock {
-            defaults.removePersistentDomain(forName: suiteName)
-            defaults.synchronize()  // force any pending write to land before we delete the file
-            let plistURL = FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask)[0]
-                .appendingPathComponent("Preferences/\(suiteName).plist")
-            try? FileManager.default.removeItem(at: plistURL)
-        }
-        return defaults
+    private func scratchDefaults() -> KeyValueStore {
+        InMemoryKeyValueStore()
     }
 
     /// Loads the fixture into `coordinator` and redirects its output directory to a
@@ -146,7 +134,7 @@ final class AppCoordinatorTests: XCTestCase {
             return
         }
         XCTAssertEqual(info.outputURL.path, candidate.path)
-        XCTAssertGreaterThan(info.pageCount, 0)
+        XCTAssertGreaterThan(info.pageCount ?? 0, 0)
     }
 
     func testDuplicateKeepBothWritesNumberedFile() async throws {

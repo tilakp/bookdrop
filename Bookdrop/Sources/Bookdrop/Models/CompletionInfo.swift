@@ -2,7 +2,8 @@ import Foundation
 
 struct CompletionInfo {
     let outputURL: URL
-    let pageCount: Int
+    /// nil for formats without a page concept (txt/html/docx).
+    let pageCount: Int?
 
     var fileSizeDisplay: String {
         let attributes = try? FileManager.default.attributesOfItem(atPath: outputURL.path)

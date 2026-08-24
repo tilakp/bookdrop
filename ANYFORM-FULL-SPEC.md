@@ -1083,17 +1083,40 @@ UX scope:
 
 This is enough to make the app feel complete.
 
-### App — Version 1.1
+### App — Version 1.1 (shipped)
 
-- EPUB → TXT
-- EPUB → HTML
-- EPUB → DOCX
-- Multiple file conversion
-- Custom page sizes
-- Typography controls
-- Header/footer
-- Page numbering
-- Better EPUB CSS handling
+- ✅ EPUB → TXT — `TxtConverter`: each chapter imported via
+  `NSAttributedString(html)`, plain-text chapters joined with a blank-line
+  separator.
+- ✅ EPUB → HTML — `HtmlConverter`: single self-contained file, CSS inlined
+  into `<style>`, images embedded as base64 `data:` URIs (zero external
+  references, works offline).
+- ✅ EPUB → DOCX — `DocxConverter`: uses `NSAttributedString`'s native
+  `.officeOpenXML` write path (the same mechanism TextEdit uses for "Save
+  as Word Document") rather than hand-rolled OOXML — verified by opening
+  real output in actual Microsoft Word.
+- ✅ Multiple file conversion — shipped ahead of schedule in v1.0.
+- ✅ Custom page sizes — `PageSize.custom` + width/height (inches) fields
+  on `PDFOptions`.
+- ✅ Typography controls, header/footer, page numbering — shipped ahead of
+  schedule in v1.0.
+- **"Better EPUB CSS handling" — scoped down, not a full pagination
+  rewrite.** The PDF renderer already uses a real engine (WKWebView), so
+  CSS support is structurally good; the one known real gap (pagination is a
+  raw Y-slice, not CSS-`break`-aware, so content can slice mid-paragraph at
+  a page boundary) remains open — a deeper pagination rewrite, deferred.
+  What v1.1 actually delivered here: the preserve/remove-styling toggle now
+  applies consistently across PDF/HTML/DOCX, not just PDF.
+
+**Architecture added:** an `OutputFormat` enum (`pdf`/`txt`/`html`/`docx`)
+that `AppCoordinator` and `MultiConversionModel` dispatch on, so each
+format's converter is a self-contained unit (`Services/TxtConverter.swift`,
+`HtmlConverter.swift`, `DocxConverter.swift`, alongside the existing
+`PdfConverter.swift`) — mirrors the input→IR→output shape from §2's Rust
+design, just without the Rust. `PDFOptions` carries fields
+(`includeCover`, `generateTableOfContents`, `preserveEpubStyling`) reused
+by every format, not just PDF — the struct name is legacy naming debt worth
+a rename in a future pass, not worth the churn/risk in this one.
 
 ### Version 2 — full conversion engine
 
