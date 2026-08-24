@@ -50,7 +50,7 @@ struct MultipleFilesView: View {
                     .buttonStyle(.plain)
             }
             Spacer()
-            Text("BookConvert")
+            Text("Bookdrop")
                 .font(.headline)
             Spacer()
             if model.isRunning { Color.clear.frame(width: 16) }

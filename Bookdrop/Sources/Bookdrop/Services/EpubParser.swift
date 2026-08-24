@@ -37,7 +37,7 @@ enum EpubParser {
         }
 
         let workDir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("BookConvert", isDirectory: true)
+            .appendingPathComponent("Bookdrop", isDirectory: true)
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: workDir, withIntermediateDirectories: true)
 

@@ -11,7 +11,7 @@ final class HistoryStore: ObservableObject {
     init(directory: URL? = nil) {
         let dir = directory
             ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-                .appendingPathComponent("BookConvert", isDirectory: true)
+                .appendingPathComponent("Bookdrop", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         fileURL = dir.appendingPathComponent("history.json")
         load()

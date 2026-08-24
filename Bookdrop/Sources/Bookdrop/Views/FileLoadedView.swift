@@ -46,7 +46,7 @@ struct FileLoadedView: View {
             }
             .buttonStyle(.plain)
             Spacer()
-            Text("BookConvert")
+            Text("Bookdrop")
                 .font(.headline)
             Spacer()
             Button(action: onSettings) {

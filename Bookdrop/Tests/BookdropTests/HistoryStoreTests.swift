@@ -1,5 +1,5 @@
 import XCTest
-@testable import BookConvert
+@testable import Bookdrop
 
 @MainActor
 final class HistoryStoreTests: XCTestCase {

@@ -19,7 +19,7 @@ enum NotificationService {
     static func notifyConversionComplete(bookTitle: String, outputURL: URL) {
         guard isNotificationCenterAvailable else { return }
         let content = UNMutableNotificationContent()
-        content.title = "BookConvert"
+        content.title = "Bookdrop"
         content.body = "\(bookTitle) has been converted to PDF."
         content.userInfo = ["outputPath": outputURL.path]
         let request = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)

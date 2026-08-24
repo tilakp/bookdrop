@@ -36,7 +36,7 @@ struct EmptyStateView: View {
 
     private var header: some View {
         HStack {
-            Text("BookConvert")
+            Text("Bookdrop")
                 .font(.headline)
             Spacer()
             Button(action: onSettings) {

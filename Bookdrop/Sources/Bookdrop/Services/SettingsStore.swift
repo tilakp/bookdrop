@@ -19,7 +19,7 @@ final class SettingsStore: ObservableObject {
     @Published var rememberLastOutputFormat: Bool { didSet { save() } }
     @Published var preserveOriginalStylingByDefault: Bool { didSet { save() } }
 
-    private static let key = "BookConvert.Settings"
+    private static let key = "Bookdrop.Settings"
     private let defaults: UserDefaults
 
     /// `defaults` is injectable so tests can use a private suite instead of the
@@ -46,13 +46,13 @@ final class SettingsStore: ObservableObject {
     }
 
     func clearTemporaryFiles() {
-        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent("BookConvert", isDirectory: true)
+        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent("Bookdrop", isDirectory: true)
         try? FileManager.default.removeItem(at: tempDir)
     }
 
     var logsDirectory: URL {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("BookConvert/Logs", isDirectory: true)
+            .appendingPathComponent("Bookdrop/Logs", isDirectory: true)
     }
 
     private func save() {

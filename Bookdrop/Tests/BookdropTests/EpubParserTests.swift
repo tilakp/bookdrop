@@ -1,5 +1,5 @@
 import XCTest
-@testable import BookConvert
+@testable import Bookdrop
 
 final class EpubParserTests: XCTestCase {
     private func fixtureURL() -> URL {

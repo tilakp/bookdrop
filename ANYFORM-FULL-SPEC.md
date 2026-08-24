@@ -15,7 +15,7 @@ product at different layers:
 - **Anyform** — the Rust conversion *engine*: a format-agnostic
   input→IR→output pipeline, not ebook-specific, CLI-first (`anyform convert
   book.epub book.pdf`).
-- **BookConvert** — a macOS *app* scoped to ebooks specifically (EPUB → PDF
+- **Bookdrop** — a macOS *app* scoped to ebooks specifically (EPUB → PDF
   etc.), with its own native SwiftUI UX, recommended to be "built as a native
   SwiftUI macOS app, with the conversion engine isolated behind a clean
   `BookConverter` protocol."
@@ -27,17 +27,17 @@ conversion path?
 
 **Decision:** Swift-native for v1. A concrete branded mock
 (`ChatGPT Image Aug 24, 2026 at 12_01_06 AM.png`) confirmed the app's own
-identity is **BookConvert** (purple mark, its own visual language — see
+identity is **Bookdrop** (purple mark, its own visual language — see
 §4.21), distinct from the **Anyform** engine name. The app ships v1
 (EPUB → PDF) with its own Swift implementation of the input-parsing →
 rendering → merge pipeline (WKWebView + PDFKit in place of headless
 Chromium + `lopdf`, same shape as §2's `DocumentIR` pipeline) — see the
-implementation plan for `BookConvert/`. The Rust `anyform` engine remains
+implementation plan for `Bookdrop/`. The Rust `anyform` engine remains
 the design for a general-purpose, multi-format engine and is a candidate to
-become BookConvert's backend via FFI in v2, once the format matrix grows
+become Bookdrop's backend via FFI in v2, once the format matrix grows
 past EPUB → PDF and reuse across platforms starts to matter. Until then the
 two evolve independently: **Anyform** names the engine/CLI concept,
-**BookConvert** names the shipping macOS app.
+**Bookdrop** names the shipping macOS app.
 
 ---
 
@@ -370,7 +370,7 @@ Resizable, with a minimum around:
 
 ```text
 ┌──────────────────────────────────────────────────────────┐
-│  BookConvert                                  ⚙              │
+│  Bookdrop                                  ⚙              │
 ├──────────────────────────────────────────────────────────┤
 │                                                          │
 │                   Convert your book                      │
@@ -426,7 +426,7 @@ After selecting an EPUB:
 
 ```text
 ┌──────────────────────────────────────────────────────────┐
-│  BookConvert                                                   │
+│  Bookdrop                                                   │
 ├──────────────────────────────────────────────────────────┤
 │                                                          │
 │  BOOK                                                     │
@@ -811,12 +811,12 @@ Store only conversion history/metadata.
 Native macOS menu:
 
 ```text
-BookConvert
+Bookdrop
 
-About BookConvert
+About Bookdrop
 Settings…
 Check for Updates…
-Quit BookConvert
+Quit Bookdrop
 
 File
 
@@ -841,7 +841,7 @@ Enter Full Screen
 
 Help
 
-BookConvert Help
+Bookdrop Help
 ```
 
 Keyboard shortcuts:
@@ -890,7 +890,7 @@ Keep Settings extremely small for MVP.
 
 After a background conversion:
 
-> **BookConvert**
+> **Bookdrop**
 >
 > The Great Gatsby has been converted to PDF.
 >
@@ -905,7 +905,7 @@ While conversion is running, the Dock icon can show progress.
 Conceptually:
 
 ```text
-BookConvert
+Bookdrop
    ↓
 [████████░░] 67%
 ```
@@ -936,7 +936,7 @@ Don't show a giant onboarding carousel.
 Just show:
 
 ```text
-                   BookConvert
+                   Bookdrop
 
              Convert books easily.
 
@@ -955,7 +955,7 @@ If we boil the entire product down to one screen, this is it:
 
 ```text
 ┌─────────────────────────────────────────────────────────────┐
-│  BookConvert                                            ⚙         │
+│  Bookdrop                                            ⚙         │
 ├─────────────────────────────────────────────────────────────┤
 │                                                             │
 │                  Convert your book                         │
@@ -1116,5 +1116,5 @@ Engine name: **Anyform**. Tagline: "Convert anything into any form."
   - `anyform-doc` — `DocumentIR` + epub/html/pdf/markdown plugins.
   - `anyform-cli` — the `anyform` binary.
   - (later) `anyform-image`, `anyform-audio` for other families.
-- macOS app: **BookConvert** — its own brand (see §0), Swift-native for v1,
+- macOS app: **Bookdrop** — its own brand (see §0), Swift-native for v1,
   a candidate to sit on top of the `anyform` engine via FFI in v2.

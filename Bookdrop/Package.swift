@@ -2,28 +2,28 @@
 import PackageDescription
 
 let package = Package(
-    name: "BookConvert",
+    name: "Bookdrop",
     platforms: [
         .macOS(.v13)
     ],
     products: [
-        .executable(name: "BookConvert", targets: ["BookConvert"])
+        .executable(name: "Bookdrop", targets: ["Bookdrop"])
     ],
     dependencies: [
         .package(url: "https://github.com/weichsel/ZIPFoundation.git", from: "0.9.0")
     ],
     targets: [
         .executableTarget(
-            name: "BookConvert",
+            name: "Bookdrop",
             dependencies: [
                 .product(name: "ZIPFoundation", package: "ZIPFoundation")
             ],
-            path: "Sources/BookConvert"
+            path: "Sources/Bookdrop"
         ),
         .testTarget(
-            name: "BookConvertTests",
-            dependencies: ["BookConvert"],
-            path: "Tests/BookConvertTests",
+            name: "BookdropTests",
+            dependencies: ["Bookdrop"],
+            path: "Tests/BookdropTests",
             resources: [
                 .copy("Fixtures")
             ]

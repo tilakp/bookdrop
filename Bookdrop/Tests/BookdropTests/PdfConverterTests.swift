@@ -1,6 +1,6 @@
 import XCTest
 import PDFKit
-@testable import BookConvert
+@testable import Bookdrop
 
 @MainActor
 final class PdfConverterTests: XCTestCase {

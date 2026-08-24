@@ -111,7 +111,7 @@ struct SettingsView: View {
     private var aboutSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             sectionTitle("About")
-            Text("BookConvert")
+            Text("Bookdrop")
                 .font(.title3.weight(.semibold))
             Text("Convert books easily.")
                 .foregroundStyle(.secondary)
