@@ -1,9 +1,47 @@
 # Anyform — Full Specification (Engine + macOS App)
 
-Status: design sketch, not yet implemented. Combines the conversion-engine
-architecture (previously `SPEC.md`) with the macOS app UX design (previously
-`Mac Book Converter — UX Specification.md`) into one document. Source files
-kept as-is alongside this one; this is the merged reference going forward.
+Combines the conversion-engine architecture (previously `SPEC.md`) with the
+macOS app UX design (previously `Mac Book Converter — UX Specification.md`)
+into one document. Source files kept as-is in `archive/`; this is the
+merged reference going forward.
+
+## Status (as of 2026-08-24)
+
+**Shipped — Bookdrop v1.0 + v1.1.** A native SwiftUI macOS app converting
+EPUB → PDF / TXT / HTML / DOCX. Source:
+[github.com/tilakp/bookdrop](https://github.com/tilakp/bookdrop) (public),
+3 commits. 44 passing tests, live-verified (each output format opened in a
+real consuming app — Preview/PDFKit, a real browser tab, and real
+Microsoft Word — not just "the code ran without throwing").
+
+**Not started — Version 2.** Swapping the Swift-native conversion pipeline
+for the Rust `anyform` engine (§5) via FFI, and/or expanding the
+input/output format matrix beyond EPUB. See §6 "Version 2" for scope. This
+is what's next when work resumes.
+
+**Quick start:**
+- Build: `cd Bookdrop && swift build`
+- Test: `swift test` — 44 tests, ~2s, all use scratch directories / an
+  in-memory `KeyValueStore` (see `Tests/BookdropTests/AppCoordinatorTests.swift`)
+  so they never touch real user data — safe to run repeatedly.
+- Run as a real `.app` bundle — needed for the Dock icon and system
+  notifications, since `swift run` alone can't provide either (no real
+  bundle identifier): `./Scripts/build-app.sh debug && open
+  .build/debug/Bookdrop.app`
+- Icon source is `Scripts/make_icon.swift` (regenerate + re-run
+  `sips`/`iconutil` only if the design changes — see §7).
+
+**Architecture at a glance:**
+- `Sources/Bookdrop/Services/AppCoordinator.swift` — the screen state
+  machine + conversion flow, unit-testable independent of SwiftUI.
+- `Sources/Bookdrop/Services/{Pdf,Txt,Html,Docx}Converter.swift` — one
+  converter per `OutputFormat` case, each a self-contained `Book → URL`
+  function; `AppCoordinator`/`MultiConversionModel` dispatch on the format.
+- `Sources/Bookdrop/Services/EpubParser.swift` + `EpubXML.swift` — EPUB →
+  `Book` (OPF/NCX/nav parsing, cover extraction).
+- `PDFOptions` (`Models/PDFOptions.swift`) carries options reused by every
+  format, not just PDF (cover/TOC/style-preservation) — the name is known
+  naming debt, not urgent enough to have risked the rename yet.
 
 ---
 
