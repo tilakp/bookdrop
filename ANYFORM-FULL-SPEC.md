@@ -1139,13 +1139,17 @@ the same shape.
 
 ### Engine — open questions / next steps
 
-- Scaffold the actual Cargo workspace (`anyform-core`, `anyform-doc`,
-  `anyform-cli`) with the EPUB input plugin fully implemented.
-- Decide on the headless-Chromium integration approach (bundle a browser?
-  require one on `PATH`? use CDP over an existing install?).
-- Decide whether third-party dynamic plugin loading is in scope for v1.
-- Flesh out `ImageIR`/`AudioIR` families once the document family is solid.
-- Resolve §0: FFI bridge into the macOS app vs. a separate Swift-native path.
+- ✅ Cargo workspace (`anyform-core`, `anyform-doc`, `anyform-ffi`,
+  `anyform-cli`) scaffolded with a working EPUB input plugin.
+- ✅ Headless-Chromium integration resolved: bundle `chrome-headless-shell`
+  (Chrome for Testing) for both macOS architectures, driven over CDP.
+- ✅ FFI bridge into the macOS app resolved and shipped (§0, §5), not a
+  separate Swift-native path, for the PDF output plugin.
+- Third-party dynamic plugin loading: still undecided, still out of scope.
+  No concrete need for it has come up.
+- `ImageIR`/`AudioIR` families: not started. Only relevant once/if the
+  format matrix expands beyond documents (see the "Format matrix" table
+  in §1).
 
 ### App — Version 1.0 (MVP)
 
@@ -1209,12 +1213,139 @@ design, just without the Rust. `PDFOptions` carries fields
 by every format, not just PDF — the struct name is legacy naming debt worth
 a rename in a future pass, not worth the churn/risk in this one.
 
-### Version 2 — full conversion engine
+### Version 2: shipped (EPUB → PDF on the Rust engine)
 
-Expand into the full matrix (§1), backed by the multi-IR engine (§2, §5):
-additional input formats (MOBI, AZW/AZW3, FB2, HTML, TXT, DOCX) and output
-formats (EPUB, MOBI/AZW3, TXT, HTML, DOCX), plus `ImageIR`/`AudioIR`
-families beyond documents.
+The vertical slice described in §5: EPUB parsing and Chromium-backed PDF
+rendering both on `anyform`, called from Swift through `anyform-ffi`.
+TXT/HTML/DOCX still go through the original Swift-native converters. See
+the Status section at the top of this file for the full detail and for
+what changed along the way (two real correctness bugs found against real
+books and fixed, default typography matched to calibre's own defaults).
+
+### What's next: full roadmap
+
+Grouped by how close each item is to being worth picking up, not by
+importance. An item lower down isn't lower value, it's usually just
+bigger or needs more scoping before starting.
+
+**Near-term, scoped, worth doing next:**
+
+- **A permanent real-book regression suite.** The 2-chapter test fixture
+  has now missed two real bugs (pagination collapse, duplicate cover) and
+  a live user report caught a third (images clipping past the page edge)
+  that no test caught either. Commit 2-3 real, diverse EPUBs to
+  `anyform-doc/tests/fixtures/` as a permanent addition: one image-heavy,
+  one with footnotes/endnotes and a large index, one with tables. Pick
+  ones that are legally redistributable (public domain, or something we
+  have rights to) since these ship in the git history. This is the
+  single highest-leverage thing to do before touching the engine again.
+- **Parallel chapter rendering.** Measured directly this session: every
+  chapter takes roughly the same ~1s wall-clock time regardless of actual
+  content length, meaning the cost is per-navigation CDP round-trip
+  overhead × chapter count, not rendering work. calibre gets its speed
+  advantage from rendering multiple chapters concurrently across a worker
+  pool sized to CPU core count, not from a fundamentally different
+  rendering approach (confirmed by reading their actual `html_writer.py`).
+  The same fix applies here: open a handful of tabs on the one bundled
+  Chromium instance (or a small pool of `chrome-headless-shell`
+  processes) and render chapters concurrently instead of one at a time.
+  Should cut wall-clock time roughly in proportion to core count on a
+  modern Mac. Needs care around: merge-step ordering (chapters must still
+  end up in spine order regardless of which finishes rendering first),
+  and cancellation (a cancelled conversion needs to stop all in-flight
+  tabs, not just the current one).
+- **A broader defensive-CSS audit.** The image-clipping fix (unconditional
+  `max-width: 100%` on img/svg/table) closed one real gap. Chrome's
+  `print_to_pdf` has no "shrink to fit" behavior at all, so anything
+  wider than the printable area clips rather than scales, and EPUBs in
+  the wild are inconsistent about constraining their own content. Worth
+  auditing for the same failure shape elsewhere: wide unconstrained
+  `<pre>`/code blocks, CSS multi-column layouts, absolutely-positioned
+  decorative elements. calibre's own pipeline doesn't defend against
+  these either (checked directly), so there's no reference implementation
+  to copy here, it's audit-and-harden work specific to us.
+- **DRM font deobfuscation.** Called out as deferred back in Phase 1
+  ("unless a DRM'd fixture surfaces the need") and never revisited.
+  Adobe/IDPF font obfuscation is common enough in real-world EPUBs
+  (library/retailer DRM strips it but personal-library scans and some
+  older files still carry it) that this will eventually surface as a
+  "fonts render as garbage" bug report. Needs a real DRM'd fixture to
+  develop against, which is the main blocker, not the deobfuscation
+  algorithm itself (it's a well-documented, simple XOR-based scheme).
+- **Verify internal EPUB links survive conversion.** Footnote/endnote
+  jump-links and cross-references are common in nonfiction (the two real
+  books tested this session both had them). Never explicitly verified
+  that an in-book `<a href="#note3">` link still jumps to the right place
+  once merged into the final PDF. Worth a dedicated test now that we have
+  real books with this structure to test against.
+
+**Medium-term, needs scoping before starting:**
+
+- **Phase 6: port TXT/HTML/DOCX output to the Rust engine.** Explicitly
+  deferred earlier this session as an accepted interim state, not a
+  problem. Revisit only if there's a concrete reason to want format
+  parity on the Rust engine (e.g. reusing the engine outside Bookdrop).
+  Mechanical extension of the same `OutputPlugin<DocumentIR>` trait;
+  `MarkdownOutput` in §2 is the template. Once done, the now-unused Swift
+  `EpubParser`/`EpubXML`/`TxtConverter`/`HtmlConverter`/`DocxConverter`/
+  `PdfConverter` get deleted outright, no compatibility shims.
+- **New output formats: true EPUB, MOBI/AZW3, Markdown.** Markdown is
+  cheap (§2 already has a worked example, pure Rust, no rendering engine
+  needed). EPUB-out and MOBI/AZW3-out are bigger: EPUB-out means
+  repackaging/re-flowing the `DocumentIR` back into a valid EPUB
+  container (manifest, spine, nav document), and MOBI/AZW3 needs either a
+  Rust KF8 writer (check crates.io first) or shelling out to Amazon's
+  `kindlegen`-equivalent tooling.
+- **New input formats: MOBI/AZW3, FB2, DOCX-in.** Check for an existing
+  well-maintained Rust `mobi`/`azw3` crate before writing a parser from
+  scratch. FB2 (common for Russian-language ebooks) is XML-based and
+  structurally closer to EPUB's own input plugin than MOBI is. DOCX-in
+  would need real OOXML parsing (a `docx-rs`-style crate), distinct from
+  the `NSAttributedString`-based DOCX *output* the Swift path already
+  does.
+- **Universal (arm64 + x86_64) Bookdrop binary.** Both Chromium
+  architectures are already bundled (this session), but the Swift
+  executable itself is still host-arch-only (`swift build` with no
+  `--arch` flags). Needs `swift build --arch arm64 --arch x86_64` + `lipo`
+  in `build-app.sh`/`release.sh`, and testing on actual Intel hardware
+  (or at minimum Rosetta) before trusting it, given this session's own
+  lesson about not trusting a build without running it for real.
+
+**Long-term / speculative, needs its own dedicated scoping pass:**
+
+- **PDF as an input format.** Came up directly this session (user asked
+  about PDF→EPUB) and is worth flagging clearly: this is not a routine
+  format-plugin addition. Every input plugin so far (EPUB, and the
+  planned MOBI/FB2/DOCX) is fundamentally *flowable text with structure
+  markup* being read into `DocumentIR`. PDF is fixed-layout with no
+  guaranteed semantic structure, positioned glyphs, not flowing text.
+  Reconstructing readable, reflowable EPUB output from that is closer to
+  the document-layout-analysis/OCR problem space than to anything the
+  engine does today (calibre's own PDF input support has historically
+  been one of its weaker, most complained-about conversion paths, for
+  exactly this reason). Worth a dedicated research spike before
+  committing to it, not a "just add the plugin" task.
+- **Third-party plugin loading.** Still explicitly out of scope (§2, §6
+  engine notes above). Would need `libloading` + a stable ABI. No
+  concrete driving need yet.
+- **`ImageIR`/`AudioIR` families.** The original engine ambition (§1, §2)
+  was explicitly broader than ebooks. Nothing currently pulls for this;
+  revisit only if there's an actual product reason to convert images or
+  audio, not just because the architecture allows for it.
+
+**Distribution and polish (not engine work, but real gaps):**
+
+- **Notarization.** Currently ad-hoc signed only, which is why every
+  install needs the right-click-Open Gatekeeper workaround documented in
+  the README. Real notarization needs a paid Apple Developer Program
+  membership ($99/year), a cost/logistics decision for the user to make,
+  not an engineering one.
+- **Auto-update.** No update mechanism today; users re-download the DMG
+  manually. Sparkle is the standard choice for this on macOS.
+- **Saved PDFOptions presets.** Advanced Options resets to the same
+  defaults every conversion. A "save as preset" / "my usual settings"
+  flow would help anyone who consistently wants non-default margins,
+  fonts, or headers/footers.
 
 ---
 
