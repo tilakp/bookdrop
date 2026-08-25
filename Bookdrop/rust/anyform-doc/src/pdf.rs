@@ -288,10 +288,24 @@ fn typography_css(opts: &RenderOptions) -> String {
     };
     format!(
         "html, body {{ margin: 0 !important; }} \
-         body {{ font-size: {}pt !important; line-height: {} !important;{font_family_rule} }}",
+         body {{ font-size: {}pt !important; line-height: {} !important;{font_family_rule} }} \
+         {IMAGE_FIT_CSS}",
         opts.font_size_pt, opts.line_spacing
     )
 }
+
+/// Chrome's print_to_pdf does not shrink oversized content to fit the page
+/// (no "shrink to fit" like some print dialogs offer) — anything wider than
+/// the printable area just gets clipped at the page edge. Some EPUBs supply
+/// their own `max-width: 100%` reset for images (calibre's own default
+/// stylesheet does), but not all do — a real scanned-page EPUB shipped
+/// images at native pixel width (1268px) under a class rule of `width:
+/// auto` with no upper bound, so a wide diagram got clipped down its right
+/// side in the rendered PDF. Applied unconditionally (not tied to any
+/// typography option) since this is a correctness fix, not a style choice:
+/// an image that already fits is unaffected by `max-width: 100%`.
+const IMAGE_FIT_CSS: &str =
+    "img, svg { max-width: 100% !important; height: auto !important; } table { max-width: 100% !important; }";
 
 /// Inserts `<style>{css}</style>` into `head`. EPUB content documents are
 /// XHTML, which mandates lowercase element names, so a literal (not
