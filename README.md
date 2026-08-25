@@ -15,7 +15,7 @@ Drop an ebook onto the window (or use the file picker) and Bookdrop converts it 
 of PDF, TXT, HTML, or DOCX. For PDF specifically, you get real control over the result: page
 size (US Letter, A4, A5, or custom), margins, orientation, typography (font, size, line
 spacing), headers/footers/page numbers, cover inclusion, and table-of-contents generation, all
-live-previewed against the actual book, not guessed at.
+live-previewed against the actual book.
 
 Multi-file conversion, a running history of past conversions, and macOS notifications when a
 batch finishes are all built in.
@@ -74,7 +74,7 @@ swift test
 ```
 
 45 Swift tests plus 15 Rust tests. Most of the PDF-related ones render through the real bundled
-Chromium binary rather than mocking it, so expect the suite to take ~30s, not milliseconds.
+Chromium binary rather than mocking it, so expect the suite to take about 30 seconds.
 
 `swift run` launches the app as a bare executable: no Dock icon, no working system
 notifications (both need a real bundle identifier `swift run` can't provide). For the real
