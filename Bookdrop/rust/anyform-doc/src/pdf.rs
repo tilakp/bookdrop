@@ -105,6 +105,7 @@ impl OutputPlugin<DocumentIR> for PdfOutput {
                     .map_err(|e| ConvError::Other(format!("failed to load {}: {e}", item.href)))?;
                 tab.wait_until_navigated()
                     .map_err(|e| ConvError::Other(format!("failed to render {}: {e}", item.href)))?;
+                wait_for_fonts_ready(&tab);
                 let bytes = tab
                     .print_to_pdf(Some(chapter_print_options(&render_opts)))
                     .map_err(|e| ConvError::Other(format!("print_to_pdf failed for {}: {e}", item.href)))?;
@@ -354,6 +355,22 @@ fn resolve_chromium_path(opts: &Options) -> Result<PathBuf, ConvError> {
          ANYFORM_CHROMIUM_PATH, or run scripts/fetch-chromium.sh"
             .into(),
     ))
+}
+
+/// Waits for `document.fonts.ready` before printing. `wait_until_navigated`
+/// only guarantees the DOM load event fired — it says nothing about
+/// `@font-face` fonts (this book declares six, loaded from local .otf
+/// files) finishing their *own* async load, which races independently of
+/// page load. Printing before a font swap finishes is a plausible source
+/// of corrupted-looking text (values mid-reflow) — matches why calibre's
+/// own Chromium-based PDF renderer explicitly waits a settle period after
+/// load before printing (see `html_writer.py`'s `settle_time`). Best-effort:
+/// a failure here shouldn't abort the whole conversion over one chapter.
+fn wait_for_fonts_ready(tab: &Tab) {
+    let _ = tab.evaluate(
+        "(document.fonts ? document.fonts.ready : Promise.resolve()).then(() => true)",
+        true,
+    );
 }
 
 fn launch_browser(path: &Path) -> Result<Browser, ConvError> {
