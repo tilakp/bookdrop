@@ -47,7 +47,11 @@ enum PageOrientation: String, CaseIterable, Identifiable {
 
 struct PDFOptions {
     var pageSize: PageSize = .usLetter
-    var margins: PageMargins = .normal
+    // Matches calibre's PDF Output default (`pdf_page_margin_*` = 72pt =
+    // 1in on all sides, confirmed against calibre/src/calibre/ebooks/
+    // conversion/plugins/pdf_output.py) — Bookdrop's own "wide" preset
+    // already happens to be exactly 72pt, so no new preset needed.
+    var margins: PageMargins = .wide
     var orientation: PageOrientation = .portrait
     var includeCover = true
     var generateTableOfContents = true
@@ -58,7 +62,10 @@ struct PDFOptions {
 
     // Advanced — wired in M4.
     var fontFamily: String = "Original"
-    var fontSizePt: Double = 11
+    // Matches calibre's PDF Output default (`pdf_default_font_size` = 20,
+    // in CSS px — 20 * 72/96 = 15pt) — verified this is the actual source
+    // of calibre's "more spacious" look, not just wider margins alone.
+    var fontSizePt: Double = 15
     var lineSpacing: Double = 1.2
     var startChaptersOnNewPage = true
     var preserveEpubStyling = true

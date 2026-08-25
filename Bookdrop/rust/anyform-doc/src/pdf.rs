@@ -170,9 +170,13 @@ impl RenderOptions {
             generate_toc: opts.get_bool("generate_table_of_contents", true),
             page_width_in: opts.get_f64("page_width_in", 8.5),
             page_height_in: opts.get_f64("page_height_in", 11.0),
-            margin_in: opts.get_f64("margin_in", 48.0 / 72.0),
+            // Fallback defaults match calibre's PDF Output plugin defaults
+            // (1in margins, 15pt base font — see PDFOptions.swift for the
+            // verification) since Swift always sends these explicitly; these
+            // only apply to callers that don't (anyform-cli, bare Options::new()).
+            margin_in: opts.get_f64("margin_in", 1.0),
             font_family,
-            font_size_pt: opts.get_f64("font_size_pt", 11.0),
+            font_size_pt: opts.get_f64("font_size_pt", 15.0),
             line_spacing: opts.get_f64("line_spacing", 1.2),
             preserve_epub_styling: opts.get_bool("preserve_epub_styling", true),
             remove_publisher_styling: opts.get_bool("remove_publisher_styling", false),
