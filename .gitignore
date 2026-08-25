@@ -9,3 +9,7 @@
 # Xcode
 DerivedData/
 *.xcuserstate
+
+# Release packaging (Scripts/release.sh output — DMGs are attached to
+# GitHub releases, not committed)
+Bookdrop/release/
