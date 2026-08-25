@@ -26,3 +26,17 @@ xcodebuild -create-xcframework \
     -output target/AnyformFFI.xcframework
 
 echo "build-ffi.sh: wrote $ROOT_DIR/target/AnyformFFI.xcframework"
+
+# SwiftPM links this static lib via raw -L/-l unsafeFlags (see Package.swift),
+# not a tracked target dependency, so it has NO idea the .a file's *content*
+# changed when only its mtime/path stay the same — `swift build`/`swift test`
+# silently skip relinking and keep serving a stale binary that still has
+# whatever Rust bug you just "fixed". Confirmed the hard way: multiple
+# rounds of real Rust fixes never reached the installed .app because of
+# exactly this. Force it: delete every previously-linked Bookdrop
+# executable and test bundle so the next `swift build`/`swift test`/
+# `Scripts/build-app.sh` is guaranteed to relink against what was just built.
+BOOKDROP_ROOT="$(cd "$ROOT_DIR/.." && pwd)"
+find "$BOOKDROP_ROOT/.build" \( -path "*/debug/Bookdrop" -o -path "*/release/Bookdrop" -o -name "BookdropPackageTests.xctest" \) \
+    -exec rm -rf {} + 2>/dev/null || true
+echo "build-ffi.sh: cleared stale linked Bookdrop/test binaries to force relink"
