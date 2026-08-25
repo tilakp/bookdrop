@@ -90,7 +90,10 @@ final class MultiConversionModel: ObservableObject {
     ) async throws -> URL {
         switch format {
         case .pdf:
-            return try await PdfConverter.convert(book: book, options: options, outputURL: outputURL, progress: progress)
+            // Routed through the Rust engine (plan Phase 4) — .txt/.html/.docx
+            // stay on the Swift-native converters until Phase 6 ports them too.
+            return try await RustConversionEngine.convert(
+                book: book, options: options, outputURL: outputURL, progress: progress)
         case .txt:
             return try TxtConverter.convert(book: book, outputURL: outputURL)
         case .html:

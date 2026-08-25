@@ -1,0 +1,15 @@
+[package]
+name = "anyform-ffi"
+edition.workspace = true
+version.workspace = true
+
+[lib]
+name = "anyform_ffi"
+crate-type = ["staticlib", "lib"]
+
+[dependencies]
+anyform-core = { path = "../anyform-core" }
+anyform-doc = { path = "../anyform-doc" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+base64 = "0.23"

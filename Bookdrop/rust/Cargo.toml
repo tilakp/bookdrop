@@ -1,0 +1,12 @@
+[workspace]
+resolver = "2"
+members = [
+    "anyform-core",
+    "anyform-doc",
+    "anyform-cli",
+    "anyform-ffi",
+]
+
+[workspace.package]
+edition = "2021"
+version = "0.1.0"

@@ -139,6 +139,8 @@ final class AppCoordinator: ObservableObject {
             screen = .loaded(book)
         } catch PdfConverterError.cancelled {
             screen = .loaded(book)
+        } catch RustConversionEngineError.cancelled {
+            screen = .loaded(book)
         } catch let error as LocalizedError {
             screen = .error(
                 message: error.errorDescription ?? "Couldn't convert this book.",
@@ -156,7 +158,9 @@ final class AppCoordinator: ObservableObject {
     private func convert(book: Book, outputURL: URL, progress: ConversionProgress) async throws -> URL {
         switch outputFormat {
         case .pdf:
-            return try await PdfConverter.convert(
+            // Routed through the Rust engine (plan Phase 4) — .txt/.html/.docx
+            // stay on the Swift-native converters until Phase 6 ports them too.
+            return try await RustConversionEngine.convert(
                 book: book, options: pdfOptions, outputURL: outputURL, progress: progress)
         case .txt:
             progress.stageText = "Converting…"

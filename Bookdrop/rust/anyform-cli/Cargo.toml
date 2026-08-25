@@ -1,0 +1,13 @@
+[package]
+name = "anyform-cli"
+edition.workspace = true
+version.workspace = true
+
+[[bin]]
+name = "anyform"
+path = "src/main.rs"
+
+[dependencies]
+anyform-core = { path = "../anyform-core" }
+anyform-doc = { path = "../anyform-doc" }
+serde_json = "1"

@@ -14,20 +14,73 @@ EPUB → PDF / TXT / HTML / DOCX. Source:
 real consuming app — Preview/PDFKit, a real browser tab, and real
 Microsoft Word — not just "the code ran without throwing").
 
-**Not started — Version 2.** Swapping the Swift-native conversion pipeline
-for the Rust `anyform` engine (§5) via FFI, and/or expanding the
-input/output format matrix beyond EPUB. See §6 "Version 2" for scope. This
-is what's next when work resumes.
+**Shipped — Version 2 EPUB→PDF vertical slice, on Rust via FFI.** PDF
+conversion now runs through a real Rust `anyform` engine end to end,
+including the full `PDFOptions` surface (page size/margins/orientation,
+cover, TOC, typography, headers/footers/page numbers — nothing in Advanced
+Options is silently ignored). What exists, in `Bookdrop/rust/`:
+
+- `anyform-core` — the §2 trait/registry design (`InputPlugin`/
+  `OutputPlugin`/`Transform`/`Registry`/`Options`), plus a `Log` trait
+  doubling as the plugin↔host channel for progress/cancellation.
+- `anyform-doc` — `EpubInput` (parity-tested against the same fixture as
+  `EpubParserTests.swift`) and `PdfOutput`, which renders each chapter
+  through a **bundled headless-Chromium binary** (`chrome-headless-shell`,
+  fetched by `rust/scripts/fetch-chromium.sh` from Chrome for Testing, not
+  committed to git — both mac-arm64 and mac-x64 fetched) via CDP, applying
+  custom page size/margins/typography (via a regex-based CSS
+  strip-and-inject pass on each chapter's HTML before rendering) and a
+  post-merge content-stream overlay for headers/footers/page numbers
+  (needed because per-chapter Chrome renders can't produce numbering that's
+  consistent across the whole merged book), then merges everything with
+  `lopdf`, including a real outline built from the EPUB's TOC (skippable).
+- `anyform-ffi` — a small C ABI (`anyform_parse_epub`,
+  `anyform_convert_start`/`anyform_cancel`, JSON for structured data),
+  built as a universal xcframework by `rust/scripts/build-ffi.sh`.
+- Wired into Bookdrop's Swift side (`Sources/Bookdrop/Services/
+  RustConversionEngine.swift` + a `CAnyform` C target in `Package.swift`)
+  for the **`.pdf` output format only** — `.txt`/`.html`/`.docx` still go
+  through the original Swift-native converters, a deliberate accepted
+  interim state (see decision below). `Scripts/build-app.sh` builds the
+  Rust engine, bundles **both** Chromium architectures into
+  `Contents/Resources/Chromium/<mac-arm64|mac-x64>/` (Swift picks the
+  right one at runtime via `#if arch(...)`), and ad-hoc codesigns. The
+  `Bookdrop` executable itself is still built single-arch (host only) —
+  true cross-architecture distribution would also need a universal
+  `swift build --arch arm64 --arch x86_64` + `lipo`, not done.
+
+All 45 Swift tests + 15 Rust tests pass, including tests that construct
+non-default `PDFOptions` (custom page size, disabled cover/TOC,
+headers/footers/page numbers, typography) and assert the *rendered PDF*
+reflects them — both at the Rust-engine level and end-to-end through
+`AppCoordinator` (Swift's own JSON-building code, not just Rust's JSON
+parsing). Live-verified: real `.app` bundle launches cleanly (screenshot
+checked); a full drag-and-drop click-through was deliberately skipped, see
+[[feedback-macos-testing-and-automation]] (this exact app's file picker has
+previously caused a keystroke-leak incident during automated verification)
+— instead, a real conversion was driven through `AppCoordinator` (the
+same class the UI calls) and the output PDF opened in Preview and
+screenshotted for a genuine visual check.
+
+**Decision — Phase 6 (TXT/HTML/DOCX → Rust) is deferred, not required for
+"done."** PDF-on-Rust + TXT/HTML/DOCX-on-Swift-native is an acceptable
+shipped state: the Swift converters are fully functional, well-tested, and
+untouched. Revisit Phase 6 only if/when there's a concrete reason to want
+those formats behind the Rust engine too (e.g. reuse on another platform).
 
 **Quick start:**
-- Build: `cd Bookdrop && swift build`
-- Test: `swift test` — 44 tests, ~2s, all use scratch directories / an
-  in-memory `KeyValueStore` (see `Tests/BookdropTests/AppCoordinatorTests.swift`)
-  so they never touch real user data — safe to run repeatedly.
-- Run as a real `.app` bundle — needed for the Dock icon and system
-  notifications, since `swift run` alone can't provide either (no real
-  bundle identifier): `./Scripts/build-app.sh debug && open
-  .build/debug/Bookdrop.app`
+- Build Swift only: `cd Bookdrop && swift build` (needs
+  `rust/target/universal/libanyform_ffi.a` to already exist — run
+  `rust/scripts/build-ffi.sh` once first, or use `Scripts/build-app.sh`
+  which does it automatically).
+- Build the Rust engine: `cd Bookdrop/rust && cargo test` (needs
+  `scripts/fetch-chromium.sh` run once first for the PDF-output tests).
+- Test: `swift test` — 45 tests (~28s, mostly real Rust/Chromium PDF
+  renders now, not mocked), all use scratch directories / an in-memory
+  `KeyValueStore` so they never touch real user data.
+- Run as a real `.app` bundle — needed for the Dock icon, system
+  notifications, and the bundled Chromium resource path: `./Scripts/build-app.sh
+  debug && open .build/debug/Bookdrop.app`
 - Icon source is `Scripts/make_icon.swift` (regenerate + re-run
   `sips`/`iconutil` only if the design changes — see §7).
 
