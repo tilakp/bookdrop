@@ -34,14 +34,23 @@ cp "$ROOT_DIR/Resources/AppIcon.icns" "$APP_DIR/Contents/Resources/AppIcon.icns"
 # sufficient for cross-architecture distribution; that also needs a
 # universal Bookdrop binary (`swift build --arch arm64 --arch x86_64` +
 # `lipo`), not attempted here.
+#
+# Copies the *entire* chrome-headless-shell-<platform>/ directory, not
+# just the executable — it's not a standalone binary, it needs its sibling
+# icudtl.dat/*.pak/v8_context_snapshot*/dylibs/resources/ alongside it at
+# runtime or it SIGTRAPs on startup (found live: the executable ran fine
+# invoked directly with those siblings present, but crashed instantly once
+# copied out on its own — Chromium's own fatal-init-failure abort, not a
+# code-signing issue despite the crash report's misleading "codeSigningMonitor"
+# field).
 for CHROMIUM_PLATFORM in mac-arm64 mac-x64; do
-    CHROMIUM_SRC="$ROOT_DIR/rust/vendor/chromium/$CHROMIUM_PLATFORM/chrome-headless-shell-$CHROMIUM_PLATFORM/chrome-headless-shell"
-    if [ ! -x "$CHROMIUM_SRC" ]; then
-        echo "build-app.sh: missing $CHROMIUM_SRC — run rust/scripts/fetch-chromium.sh" >&2
+    CHROMIUM_SRC_DIR="$ROOT_DIR/rust/vendor/chromium/$CHROMIUM_PLATFORM/chrome-headless-shell-$CHROMIUM_PLATFORM"
+    if [ ! -x "$CHROMIUM_SRC_DIR/chrome-headless-shell" ]; then
+        echo "build-app.sh: missing $CHROMIUM_SRC_DIR/chrome-headless-shell — run rust/scripts/fetch-chromium.sh" >&2
         exit 1
     fi
     mkdir -p "$APP_DIR/Contents/Resources/Chromium/$CHROMIUM_PLATFORM"
-    cp "$CHROMIUM_SRC" "$APP_DIR/Contents/Resources/Chromium/$CHROMIUM_PLATFORM/chrome-headless-shell"
+    cp -R "$CHROMIUM_SRC_DIR/." "$APP_DIR/Contents/Resources/Chromium/$CHROMIUM_PLATFORM/"
     chmod +x "$APP_DIR/Contents/Resources/Chromium/$CHROMIUM_PLATFORM/chrome-headless-shell"
 done
 
