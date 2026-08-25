@@ -64,8 +64,9 @@ impl InputPlugin<DocumentIR> for EpubInput {
 
         let opf = parse_opf(&opf_path)?;
         let toc = parse_toc(&opf, &content_dir);
-        let cover = opf
-            .cover_href()
+        let cover_href = opf.cover_href();
+        let cover = cover_href
+            .as_ref()
             .and_then(|href| std::fs::read(content_dir.join(href)).ok());
 
         let spine: Vec<SpineItem> = opf
@@ -92,6 +93,7 @@ impl InputPlugin<DocumentIR> for EpubInput {
                 title,
                 author: opf.author.clone(),
                 cover,
+                cover_href,
             },
             manifest: opf.manifest,
             spine,

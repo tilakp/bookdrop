@@ -54,25 +54,47 @@ impl OutputPlugin<DocumentIR> for PdfOutput {
         // page) paired with the rendered single-chapter PDF.
         let mut chunks: Vec<(Option<String>, lopdf::Document)> = Vec::new();
 
-        let total_steps = ir.spine.len() + if render_opts.include_cover && ir.metadata.cover.is_some() { 1 } else { 0 };
+        let include_synthetic_cover = render_opts.include_cover && ir.metadata.cover.is_some();
+
+        // Many EPUBs *also* have a dedicated cover page in the spine (a
+        // separate XHTML file that's just an <img> of the same cover
+        // image) — conventionally the first spine item. If we've already
+        // inserted our own synthetic cover page above, rendering that one
+        // too would duplicate the cover as page 2. Detected by checking
+        // whether the first spine item's markup references the cover
+        // image's filename, rather than assuming by position alone.
+        let skip_spine_index = if include_synthetic_cover {
+            ir.metadata.cover_href.as_deref().and_then(|cover_href| {
+                let first = ir.spine.first()?;
+                let first_path = ir.content_dir.join(&first.href);
+                spine_item_is_cover_page(&first_path, cover_href).then_some(0usize)
+            })
+        } else {
+            None
+        };
+
+        let render_count = ir.spine.len() - if skip_spine_index.is_some() { 1 } else { 0 };
+        let total_steps = render_count + if include_synthetic_cover { 1 } else { 0 };
         let mut step = 0usize;
 
-        if render_opts.include_cover {
-            if let Some(cover_bytes) = &ir.metadata.cover {
-                log.info("rendering cover page");
-                log.progress(step as f64 / total_steps as f64, "Rendering cover");
-                let doc = render_cover_page(&tab, cover_bytes, &ir.content_dir, &render_opts)?;
-                chunks.push((None, doc));
-                step += 1;
-            }
+        if include_synthetic_cover {
+            let cover_bytes = ir.metadata.cover.as_ref().unwrap();
+            log.info("rendering cover page");
+            log.progress(step as f64 / total_steps as f64, "Rendering cover");
+            let doc = render_cover_page(&tab, cover_bytes, &ir.content_dir, &render_opts)?;
+            chunks.push((None, doc));
+            step += 1;
         }
 
         for (i, item) in ir.spine.iter().enumerate() {
+            if skip_spine_index == Some(i) {
+                continue;
+            }
             if log.is_cancelled() {
                 return Err(ConvError::Cancelled);
             }
-            log.info(&format!("rendering {} ({}/{})", item.href, i + 1, ir.spine.len()));
-            log.progress(step as f64 / total_steps as f64, &format!("Rendering chapter {}/{}", i + 1, ir.spine.len()));
+            log.info(&format!("rendering {} ({}/{})", item.href, step + 1, total_steps));
+            log.progress(step as f64 / total_steps as f64, &format!("Rendering chapter {}/{}", step + 1, total_steps));
             step += 1;
 
             let original_path = ir.content_dir.join(&item.href);
@@ -238,10 +260,18 @@ fn prepare_chapter_html(original: &Path, index: usize, opts: &RenderOptions) -> 
     let css = typography_css(opts);
     html = inject_style(&html, &css);
 
+    // Keep the original extension (almost always .xhtml): renaming to
+    // .html changes how Chrome parses the file — lenient HTML5 tag-soup
+    // parsing instead of strict XHTML/XML parsing — which produced a
+    // *different DOM* for real book markup (dropcap spans, epub:-namespaced
+    // attributes, etc.) and silently collapsed pagination to 1-3 pages
+    // regardless of actual content length. A 2-chapter test fixture never
+    // exercised markup complex enough to trip this; a real book did.
+    let ext = original.extension().and_then(|e| e.to_str()).unwrap_or("xhtml");
     let render_path = original
         .parent()
         .unwrap_or(original)
-        .join(format!("__anyform_render_{index}.html"));
+        .join(format!("__anyform_render_{index}.{ext}"));
     std::fs::write(&render_path, html)?;
     Ok(render_path)
 }
@@ -271,6 +301,20 @@ fn inject_style(html: &str, css: &str) -> String {
     } else {
         format!("<head>{style_block}</head>{html}")
     }
+}
+
+/// True if `spine_path`'s markup references `cover_href`'s filename (e.g.
+/// via `<img src="../images/cover.jpg">`) — i.e. this spine page's whole
+/// job is displaying the cover image, so it shouldn't also be rendered as
+/// a regular chapter once a synthetic cover page has already been added.
+fn spine_item_is_cover_page(spine_path: &Path, cover_href: &str) -> bool {
+    let Some(cover_filename) = Path::new(cover_href).file_name().and_then(|f| f.to_str()) else {
+        return false;
+    };
+    let Ok(html) = std::fs::read_to_string(spine_path) else {
+        return false;
+    };
+    html.contains(cover_filename)
 }
 
 fn resolve_chromium_path(opts: &Options) -> Result<PathBuf, ConvError> {

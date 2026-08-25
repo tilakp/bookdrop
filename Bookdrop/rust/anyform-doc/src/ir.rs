@@ -29,6 +29,11 @@ pub struct Metadata {
     pub author: Option<String>,
     #[serde(skip)]
     pub cover: Option<Vec<u8>>,
+    /// Manifest href of the cover *image* resource (not the spine page that
+    /// displays it, if any) — used by `PdfOutput` to detect and skip a
+    /// dedicated cover spine page so the cover isn't rendered twice.
+    #[serde(skip)]
+    pub cover_href: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
