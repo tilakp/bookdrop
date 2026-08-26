@@ -1,5 +1,6 @@
 mod epub;
 mod epub_output;
+mod html;
 mod htmltext;
 mod ir;
 mod kindle;
@@ -8,6 +9,7 @@ mod txt;
 
 pub use epub::EpubInput;
 pub use epub_output::EpubOutput;
+pub use html::HtmlOutput;
 pub use kindle::KindleInput;
 pub use ir::{DocumentIR, Metadata, Resource, SpineItem, TocNode};
 pub use pdf::PdfOutput;
@@ -31,5 +33,6 @@ pub fn document_registry() -> Registry<DocumentIR> {
     r.add_output(Arc::new(PdfOutput));
     r.add_output(Arc::new(EpubOutput));
     r.add_output(Arc::new(TxtOutput));
+    r.add_output(Arc::new(HtmlOutput));
     r
 }

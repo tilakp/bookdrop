@@ -596,7 +596,7 @@ fn render_cover_page(
     result
 }
 
-fn sniff_image_mime(bytes: &[u8]) -> &'static str {
+pub(crate) fn sniff_image_mime(bytes: &[u8]) -> &'static str {
     if bytes.starts_with(&[0x89, 0x50, 0x4E, 0x47]) {
         "image/png"
     } else if bytes.starts_with(&[0xFF, 0xD8]) {
