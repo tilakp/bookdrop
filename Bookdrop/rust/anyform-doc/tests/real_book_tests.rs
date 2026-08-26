@@ -125,3 +125,29 @@ fn real_book_fixtures_are_present_and_nonempty() {
         assert!(size > 50_000, "{name} is suspiciously small ({size} bytes) for a real book fixture");
     }
 }
+
+#[test]
+fn origin_of_species_chapters_stay_in_spine_order() {
+    // Parallel rendering must not scramble chapter order in the merged
+    // PDF even though workers finish out of order - "Chapter I." should
+    // appear well before "INDEX" in extracted page order.
+    let doc = convert("order-check", "origin-of-species.epub");
+    let pages = doc.get_pages();
+    let mut page_numbers: Vec<u32> = pages.keys().copied().collect();
+    page_numbers.sort();
+    let mut chapter_one_page = None;
+    let mut index_page = None;
+    for n in &page_numbers {
+        let text = doc.extract_text(&[*n]).unwrap_or_default();
+        if chapter_one_page.is_none() && text.contains("VARIATION UNDER DOMESTICATION") {
+            chapter_one_page = Some(*n);
+        }
+        if text.to_uppercase().contains("INDEX") && *n > page_numbers[page_numbers.len() / 2] {
+            index_page = Some(*n);
+            break;
+        }
+    }
+    let chapter_one_page = chapter_one_page.expect("Chapter I heading should appear somewhere");
+    let index_page = index_page.expect("INDEX should appear in the back half of the book");
+    assert!(chapter_one_page < index_page, "Chapter I (page {chapter_one_page}) should come before the index (page {index_page})");
+}

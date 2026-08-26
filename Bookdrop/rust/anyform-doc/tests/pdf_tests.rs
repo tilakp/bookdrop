@@ -1,6 +1,8 @@
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::Instant;
 
-use anyform_core::{Options, Priority, StdLog, Value};
+use anyform_core::{ConvError, Log, Options, Priority, StdLog, Value};
 
 /// Requires the vendored chrome-headless-shell binary — run
 /// `rust/scripts/fetch-chromium.sh` once before `cargo test` (see plan
@@ -151,6 +153,49 @@ fn page_numbers_and_headers_appear_in_rendered_text() {
         .collect();
     assert!(all_text.contains("Minimal Fixture Book"), "expected book title from header/footer");
     assert!(all_text.contains('1') && all_text.contains('2'), "expected page numbers 1 and 2");
+}
+
+/// Reports cancelled once `progress()` has been called `after` times -
+/// simulates a user hitting cancel partway through a real conversion.
+struct CancelAfter {
+    calls: AtomicUsize,
+    after: usize,
+}
+
+impl Log for CancelAfter {
+    fn info(&self, _msg: &str) {}
+    fn progress(&self, _fraction: f64, _stage: &str) {
+        self.calls.fetch_add(1, Ordering::SeqCst);
+    }
+    fn is_cancelled(&self) -> bool {
+        self.calls.load(Ordering::SeqCst) >= self.after
+    }
+}
+
+#[test]
+fn cancellation_stops_in_flight_chapter_rendering() {
+    // Chapters render across a pool of concurrent Chrome tabs (see
+    // render_chapters_parallel in pdf.rs) - this proves every worker
+    // actually stops polling the same shared cancellation flag instead of
+    // running its whole chunk to completion once cancelled, using a real
+    // multi-chapter book (minimal.epub only has 2 chapters, not enough to
+    // meaningfully exercise a worker pool).
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/origin-of-species.epub");
+    let output = std::env::temp_dir().join(format!("anyform-pdf-test-cancel-{}.pdf", std::process::id()));
+    let log = CancelAfter { calls: AtomicUsize::new(0), after: 3 };
+    let registry = anyform_doc::document_registry();
+
+    let start = Instant::now();
+    let result = registry.convert(&fixture, &output, &Options::new(), &log);
+    let elapsed = start.elapsed();
+
+    assert!(matches!(result, Err(ConvError::Cancelled)), "expected Cancelled, got {result:?}");
+    assert!(!output.exists(), "cancelled conversion should not have written an output file");
+    // The full uncancelled conversion of this 29-chapter book takes ~10s;
+    // stopping after 3 chapters across an 8-tab pool should be well under
+    // that if cancellation is actually propagating, not just checked once
+    // up front.
+    assert!(elapsed.as_secs() < 8, "cancellation took {elapsed:?}, expected it to stop well before full completion");
 }
 
 #[test]
