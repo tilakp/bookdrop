@@ -21,6 +21,7 @@ fn parses_metadata() {
     let ir = parse();
     assert_eq!(ir.metadata.title, "Minimal Fixture Book");
     assert_eq!(ir.metadata.author.as_deref(), Some("Test Author"));
+    assert_eq!(ir.metadata.language.as_deref(), Some("en"));
     assert!(ir.file_size_bytes > 0);
 }
 

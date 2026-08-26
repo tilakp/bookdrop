@@ -15,6 +15,13 @@ nav and EPUB2 NCX TOC documents respectively. Real EPUBs very commonly do
 happens not to, which is why a DTD-rejection bug silently wiped the table
 of contents for a long time without any test noticing.
 
+`nested-nav.epub` is a minimal fixture whose EPUB3 nav document lives at
+`OEBPS/text/nav.xhtml` (not the content-directory root, unlike every other
+fixture here) with chapter TOC hrefs written relative to `text/` - the only
+fixture that pins down `TocNode.href` being relative to the nav document's
+own directory, not `content_dir` (see `epub_output_tests.rs`'s
+`nested_toc_directory_keeps_hrefs_valid`).
+
 `minimal.azw3` is `minimal.epub` converted by the bundled `boko` binary,
 used by `kindle_tests.rs` to assert Kindle-format input parses to the same
 `DocumentIR` as its EPUB source. Regenerate with

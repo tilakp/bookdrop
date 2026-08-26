@@ -10,6 +10,7 @@ use crate::ir::{DocumentIR, Metadata, Resource, SpineItem, TocNode};
 struct OpfDocument {
     title: Option<String>,
     author: Option<String>,
+    language: Option<String>,
     manifest: HashMap<String, Resource>,
     spine_idrefs: Vec<String>,
     toc_ncx_id: Option<String>,
@@ -107,6 +108,7 @@ impl InputPlugin<DocumentIR> for EpubInput {
             metadata: Metadata {
                 title,
                 author: opf.author.clone(),
+                language: opf.language.clone(),
                 cover,
                 cover_href,
             },
@@ -164,7 +166,7 @@ fn extract_epub(input: &Path) -> Result<PathBuf, ConvError> {
 /// entities, and its billion-laughs protection is independent of this
 /// flag (the crate documents the default as "just an extra security
 /// measure").
-fn parse_xml(xml: &str) -> Result<roxmltree::Document<'_>, roxmltree::Error> {
+pub(crate) fn parse_xml(xml: &str) -> Result<roxmltree::Document<'_>, roxmltree::Error> {
     let options = roxmltree::ParsingOptions { allow_dtd: true, ..Default::default() };
     roxmltree::Document::parse_with_options(xml, options)
 }
@@ -291,6 +293,7 @@ fn parse_opf(opf_path: &Path) -> Result<OpfDocument, ConvError> {
     let mut result = OpfDocument {
         title: None,
         author: None,
+        language: None,
         manifest: HashMap::new(),
         spine_idrefs: Vec::new(),
         toc_ncx_id: None,
@@ -316,6 +319,11 @@ fn parse_opf(opf_path: &Path) -> Result<OpfDocument, ConvError> {
                 let text = element_text(child);
                 if !text.is_empty() {
                     result.author = Some(text);
+                }
+            } else if local == "language" && result.language.is_none() {
+                let text = element_text(child);
+                if !text.is_empty() {
+                    result.language = Some(text);
                 }
             } else if local == "identifier" {
                 let scheme = child

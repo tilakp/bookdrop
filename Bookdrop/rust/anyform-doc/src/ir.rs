@@ -27,6 +27,10 @@ pub struct DocumentIR {
 pub struct Metadata {
     pub title: String,
     pub author: Option<String>,
+    /// EPUB3 requires `<dc:language>` on every package; `EpubOutput` needs
+    /// a value to emit even when the source didn't have one (falls back to
+    /// `"en"`).
+    pub language: Option<String>,
     #[serde(skip)]
     pub cover: Option<Vec<u8>>,
     /// Manifest href of the cover *image* resource (not the spine page that
@@ -54,7 +58,13 @@ pub struct SpineItem {
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct TocNode {
     pub title: String,
-    /// Relative to the OPF's content directory, may include a "#fragment".
+    /// Relative to the TOC document's own directory (the EPUB3 nav
+    /// document, or the EPUB2 `toc.ncx`) - *not* `content_dir` - since
+    /// `epub.rs`'s parser stores the raw href/src attribute verbatim and
+    /// only uses `content_dir` to locate the nav/ncx file itself. May
+    /// include a "#fragment". `EpubOutput` must regenerate the nav/ncx at
+    /// the same relative directory as the source or every link here
+    /// breaks - see `nested-nav.epub` in the test fixtures.
     pub href: Option<String>,
     pub children: Vec<TocNode>,
 }
