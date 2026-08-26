@@ -15,6 +15,12 @@ nav and EPUB2 NCX TOC documents respectively. Real EPUBs very commonly do
 happens not to, which is why a DTD-rejection bug silently wiped the table
 of contents for a long time without any test noticing.
 
+`text-entities.epub` has a deliberately non-well-formed chapter (an
+unclosed `<br>`, undeclared HTML named entities like `&nbsp;`/`&mdash;`) to
+force `htmltext.rs`'s regex fallback path rather than its normal roxmltree
+fast path - the only fixture that exercises it (see
+`txt_tests.rs::decodes_entities_and_drops_script_and_style`).
+
 `nested-nav.epub` is a minimal fixture whose EPUB3 nav document lives at
 `OEBPS/text/nav.xhtml` (not the content-directory root, unlike every other
 fixture here) with chapter TOC hrefs written relative to `text/` - the only

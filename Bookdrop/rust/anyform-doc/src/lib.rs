@@ -1,14 +1,17 @@
 mod epub;
 mod epub_output;
+mod htmltext;
 mod ir;
 mod kindle;
 mod pdf;
+mod txt;
 
 pub use epub::EpubInput;
 pub use epub_output::EpubOutput;
 pub use kindle::KindleInput;
 pub use ir::{DocumentIR, Metadata, Resource, SpineItem, TocNode};
 pub use pdf::PdfOutput;
+pub use txt::TxtOutput;
 
 use std::sync::Arc;
 
@@ -27,5 +30,6 @@ pub fn document_registry() -> Registry<DocumentIR> {
     r.add_input(Arc::new(KindleInput));
     r.add_output(Arc::new(PdfOutput));
     r.add_output(Arc::new(EpubOutput));
+    r.add_output(Arc::new(TxtOutput));
     r
 }
