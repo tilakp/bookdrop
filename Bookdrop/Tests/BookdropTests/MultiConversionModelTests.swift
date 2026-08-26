@@ -114,4 +114,29 @@ final class MultiConversionModelTests: XCTestCase {
         // empty or corrupted output wouldn't even have this much.
         XCTAssertEqual(data.prefix(2), Data([0x50, 0x4B]))
     }
+
+    func testConvertsToEpub() async throws {
+        let outputDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("MultiConversionModelTests-\(UUID().uuidString)")
+        let historyDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("MultiConversionModelTests-history-\(UUID().uuidString)")
+        let history = HistoryStore(directory: historyDir)
+
+        let model = MultiConversionModel(urls: [fixtureURL()], outputDirectory: outputDir)
+        await model.run(options: PDFOptions(), format: .epub, historyStore: history)
+
+        XCTAssertEqual(model.completedCount, 1)
+        guard case .done(let url) = model.jobs[0].status else {
+            XCTFail("expected job to be done, got \(model.jobs[0].status)")
+            return
+        }
+        XCTAssertEqual(url.pathExtension, "epub")
+        // The regenerated EPUB should itself be re-parseable — the same
+        // round-trip property anyform-doc's own epub_output_tests.rs
+        // verifies at the Rust level, checked here end to end through the
+        // real Swift/FFI boundary too.
+        let regenerated = try EpubParser.parse(fileAt: url)
+        XCTAssertEqual(regenerated.title, "Minimal Fixture Book")
+        XCTAssertEqual(regenerated.chapterCount, 2)
+    }
 }

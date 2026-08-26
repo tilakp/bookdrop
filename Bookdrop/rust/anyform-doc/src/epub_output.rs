@@ -81,6 +81,9 @@ impl OutputPlugin<DocumentIR> for EpubOutput {
         let mut items: Vec<&Resource> = ir.manifest.values().collect();
         items.sort_by(|a, b| a.id.cmp(&b.id));
 
+        if let Some(parent) = output.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
         let file = std::fs::File::create(output)?;
         let mut zip = ZipWriter::new(file);
 

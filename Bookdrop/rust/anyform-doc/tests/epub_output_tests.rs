@@ -166,3 +166,23 @@ fn empty_spine_is_rejected() {
     let _ = std::fs::remove_file(&output);
     assert!(result.is_err());
 }
+
+#[test]
+fn creates_missing_output_directory() {
+    // Every other output plugin (pdf/txt/html/docx) creates its output's
+    // parent directory before writing; EpubOutput originally didn't,
+    // which every existing test here missed since they all write into
+    // std::env::temp_dir() directly (always exists) - only caught by a
+    // Swift-side end-to-end test that used a genuinely fresh UUID-named
+    // directory, the same shape a real "Convert Again" into a brand-new
+    // output folder would hit. Regression-tests that specifically.
+    let dir = std::env::temp_dir().join(format!("anyform-epub-out-newdir-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(!dir.exists(), "test setup: directory must not already exist");
+
+    let output = dir.join("out.epub");
+    let registry = anyform_doc::document_registry();
+    let result = registry.convert(&fixtures_dir().join("minimal.epub"), &output, &Options::new(), &StdLog);
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(result.is_ok(), "expected EpubOutput to create its output directory, got {result:?}");
+}
