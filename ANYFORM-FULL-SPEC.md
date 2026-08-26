@@ -5,7 +5,7 @@ macOS app UX design (previously `Mac Book Converter — UX Specification.md`)
 into one document. Source files kept as-is in `archive/`; this is the
 merged reference going forward.
 
-## Status (as of 2026-08-24)
+## Status (as of 2026-08-26)
 
 **Shipped — Bookdrop v1.0 + v1.1.** A native SwiftUI macOS app converting
 EPUB → PDF / TXT / HTML / DOCX. Source:
@@ -39,9 +39,10 @@ Options is silently ignored). What exists, in `Bookdrop/rust/`:
   built as a universal xcframework by `rust/scripts/build-ffi.sh`.
 - Wired into Bookdrop's Swift side (`Sources/Bookdrop/Services/
   RustConversionEngine.swift` + a `CAnyform` C target in `Package.swift`)
-  for the **`.pdf` output format only** — `.txt`/`.html`/`.docx` still go
-  through the original Swift-native converters, a deliberate accepted
-  interim state (see decision below). `Scripts/build-app.sh` builds the
+  for **every output format** — `.pdf`/`.epub`/`.txt`/`.html`/`.docx` all go
+  through the Rust engine now; the Swift-native converters that used to
+  handle the last three are deleted (Phase 6, see decision below).
+  `Scripts/build-app.sh` builds the
   Rust engine, bundles **both** Chromium architectures into
   `Contents/Resources/Chromium/<mac-arm64|mac-x64>/` (Swift picks the
   right one at runtime via `#if arch(...)`), and ad-hoc codesigns. The
@@ -49,7 +50,7 @@ Options is silently ignored). What exists, in `Bookdrop/rust/`:
   true cross-architecture distribution would also need a universal
   `swift build --arch arm64 --arch x86_64` + `lipo`, not done.
 
-All 45 Swift tests + 15 Rust tests pass, including tests that construct
+All 43 Swift tests + 70 Rust tests pass, including tests that construct
 non-default `PDFOptions` (custom page size, disabled cover/TOC,
 headers/footers/page numbers, typography) and assert the *rendered PDF*
 reflects them — both at the Rust-engine level and end-to-end through
@@ -62,11 +63,18 @@ previously caused a keystroke-leak incident during automated verification)
 same class the UI calls) and the output PDF opened in Preview and
 screenshotted for a genuine visual check.
 
-**Decision — Phase 6 (TXT/HTML/DOCX → Rust) is deferred, not required for
-"done."** PDF-on-Rust + TXT/HTML/DOCX-on-Swift-native is an acceptable
-shipped state: the Swift converters are fully functional, well-tested, and
-untouched. Revisit Phase 6 only if/when there's a concrete reason to want
-those formats behind the Rust engine too (e.g. reuse on another platform).
+**Decision — Phase 6 (TXT/HTML/DOCX → Rust), done.** *(2026-08-26)* Ported
+all three to `anyform-doc` (`txt.rs`/`html.rs`/`docx.rs`, sharing a new
+`htmltext.rs` chapter-XHTML extractor), alongside a new true EPUB output
+plugin (`epub_output.rs`) built in the same pass. `AppCoordinator` and
+`MultiConversionModel` now dispatch every output format through
+`RustConversionEngine` unconditionally — no per-format Swift branching left.
+The four now-dead Swift converters (`Pdf`/`Txt`/`Html`/`DocxConverter.swift`)
+and their tests are deleted; `EpubParser`/`EpubXML`/`KindleNormalizer`
+are **not** — they remain load-bearing for parsing the `Book` the UI
+displays (title/author/cover/chapter count), independent of which engine
+performs the byte-level conversion. See §6 for the two round-trip
+limitations of EPUB-out (non-linear spine items; source `dc:identifier`).
 
 **Quick start:**
 - Build Swift only: `cd Bookdrop && swift build` (needs
@@ -74,8 +82,9 @@ those formats behind the Rust engine too (e.g. reuse on another platform).
   `rust/scripts/build-ffi.sh` once first, or use `Scripts/build-app.sh`
   which does it automatically).
 - Build the Rust engine: `cd Bookdrop/rust && cargo test` (needs
-  `scripts/fetch-chromium.sh` run once first for the PDF-output tests).
-- Test: `swift test` — 45 tests (~28s, mostly real Rust/Chromium PDF
+  `scripts/fetch-chromium.sh` run once first for the PDF-output tests) —
+  70 tests.
+- Test: `swift test` — 43 tests (~26s, mostly real Rust/Chromium PDF
   renders now, not mocked), all use scratch directories / an in-memory
   `KeyValueStore` so they never touch real user data.
 - Run as a real `.app` bundle — needed for the Dock icon, system
@@ -87,11 +96,19 @@ those formats behind the Rust engine too (e.g. reuse on another platform).
 **Architecture at a glance:**
 - `Sources/Bookdrop/Services/AppCoordinator.swift` — the screen state
   machine + conversion flow, unit-testable independent of SwiftUI.
-- `Sources/Bookdrop/Services/{Pdf,Txt,Html,Docx}Converter.swift` — one
-  converter per `OutputFormat` case, each a self-contained `Book → URL`
-  function; `AppCoordinator`/`MultiConversionModel` dispatch on the format.
+- `Sources/Bookdrop/Services/RustConversionEngine.swift` — the sole
+  conversion path for every `OutputFormat` case now; `AppCoordinator`/
+  `MultiConversionModel` call it unconditionally, dispatch on the output
+  path's extension happens inside the Rust registry (§2), not in Swift.
+- `Bookdrop/rust/anyform-doc/src/{pdf,epub_output,txt,html,docx}.rs` — the
+  five output plugins backing that (PDF via bundled headless Chromium;
+  EPUB/TXT/HTML/DOCX pure Rust, TXT and DOCX sharing `htmltext.rs`'s
+  chapter-XHTML extractor).
 - `Sources/Bookdrop/Services/EpubParser.swift` + `EpubXML.swift` — EPUB →
-  `Book` (OPF/NCX/nav parsing, cover extraction).
+  `Book` (OPF/NCX/nav parsing, cover extraction). Kept deliberately even
+  though byte-level conversion moved entirely to Rust: this is what parses
+  the `Book` the UI displays (title/author/cover/chapter count) and what
+  `KindleNormalizer.swift` hands off to after normalizing AZW3/KFX/MOBI.
 - `PDFOptions` (`Models/PDFOptions.swift`) carries options reused by every
   format, not just PDF (cover/TOC/style-preservation) — the name is known
   naming debt, not urgent enough to have risked the rename yet.
@@ -1216,11 +1233,29 @@ a rename in a future pass, not worth the churn/risk in this one.
 ### Version 2: shipped (EPUB → PDF on the Rust engine)
 
 The vertical slice described in §5: EPUB parsing and Chromium-backed PDF
-rendering both on `anyform`, called from Swift through `anyform-ffi`.
-TXT/HTML/DOCX still go through the original Swift-native converters. See
+rendering both on `anyform`, called from Swift through `anyform-ffi`. See
 the Status section at the top of this file for the full detail and for
 what changed along the way (two real correctness bugs found against real
 books and fixed, default typography matched to calibre's own defaults).
+
+### Version 2.1: shipped (true EPUB output + Phase 6)
+
+*(2026-08-26)* Every output format now runs on `anyform`: TXT/HTML/DOCX
+ported from Swift-native (§ "Phase 6" above), plus a new true EPUB output
+plugin (`epub_output.rs`) — a faithful repackage of the `DocumentIR`, not a
+rebuild: every manifest resource is copied byte-for-byte, only
+`mimetype`/`container.xml`/the OPF/the nav document/`toc.ncx` are
+regenerated. Two round-trip properties can't be preserved, by construction
+of the IR rather than as a bug: **non-linear spine items** (`EpubInput`
+already drops the `linear="no"` distinction before the IR is built, so
+`EpubOutput` has nothing left to preserve it from) and the **source
+`dc:identifier`** (not carried in `Metadata` — `EpubOutput` mints a
+deterministic replacement instead, a SHA-1 of title + author + spine hrefs
+formatted as a `urn:uuid:`-shaped string, so re-running a conversion on the
+same book is reproducible even though it isn't the original id). Also
+newly exposed: **AZW3/KFX/MOBI → EPUB**, since `KindleInput` already
+normalizes every Kindle format to EPUB before handing off to the shared
+registry — this was a free capability unlock, not new engine work.
 
 ### What's next: full roadmap
 
@@ -1299,21 +1334,25 @@ bigger or needs more scoping before starting.
 
 **Medium-term, needs scoping before starting:**
 
-- **Phase 6: port TXT/HTML/DOCX output to the Rust engine.** Explicitly
-  deferred earlier this session as an accepted interim state, not a
-  problem. Revisit only if there's a concrete reason to want format
-  parity on the Rust engine (e.g. reusing the engine outside Bookdrop).
-  Mechanical extension of the same `OutputPlugin<DocumentIR>` trait;
-  `MarkdownOutput` in §2 is the template. Once done, the now-unused Swift
-  `EpubParser`/`EpubXML`/`TxtConverter`/`HtmlConverter`/`DocxConverter`/
-  `PdfConverter` get deleted outright, no compatibility shims.
-- **New output formats: true EPUB, MOBI/AZW3, Markdown.** Markdown is
-  cheap (§2 already has a worked example, pure Rust, no rendering engine
-  needed). EPUB-out and MOBI/AZW3-out are bigger: EPUB-out means
-  repackaging/re-flowing the `DocumentIR` back into a valid EPUB
-  container (manifest, spine, nav document), and MOBI/AZW3 needs either a
+- ~~**Phase 6: port TXT/HTML/DOCX output to the Rust engine.**~~ Done
+  (2026-08-26), alongside a true EPUB output plugin built in the same
+  pass (see the Status section and §6's "Version 2" entry below). Each
+  was a mechanical extension of the same `OutputPlugin<DocumentIR>` trait
+  — `pdf.rs` is the actual structural precedent followed (§2's
+  `MarkdownOutput` snippet above is illustrative pseudocode only; real
+  `SpineItem`s carry no `html` field, every plugin reads chapter bytes
+  itself via `content_dir.join(&item.href)`). The now-unused
+  `TxtConverter`/`HtmlConverter`/`DocxConverter`/`PdfConverter.swift` were
+  deleted outright, no compatibility shims. `EpubParser`/`EpubXML`/
+  `KindleNormalizer.swift` were **not** deleted — they remain
+  load-bearing for `Book`-for-UI parsing regardless of which engine
+  performs byte-level conversion (this doc previously overclaimed they'd
+  go too).
+- **New output formats: MOBI/AZW3, Markdown.** Markdown is cheap (§2
+  already has a worked example — pseudocode, not literal, see above —
+  pure Rust, no rendering engine needed). MOBI/AZW3-out needs either a
   Rust KF8 writer (check crates.io first) or shelling out to Amazon's
-  `kindlegen`-equivalent tooling.
+  `kindlegen`-equivalent tooling. True EPUB-out is done — see §6 below.
 - **New input formats: MOBI/AZW3, FB2, DOCX-in.** *Kindle formats done at
   the engine layer* (2026-08-25): `KindleInput` (`anyform-doc/src/kindle.rs`)
   handles AZW3/AZW/KFX/MOBI by normalizing to EPUB with a bundled `boko`

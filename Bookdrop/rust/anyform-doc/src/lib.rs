@@ -22,12 +22,12 @@ use std::sync::Arc;
 use anyform_core::Registry;
 
 /// The document-family registry — EPUB and Kindle-family (AZW3/KFX/MOBI)
-/// input, PDF/EPUB output (via bundled headless Chromium for PDF; EPUB is a
-/// faithful repackage of the IR, no external engine). Kindle formats are
-/// normalized to EPUB by the bundled `boko` binary, so they reach every
-/// output format the engine supports without a dedicated path each.
-/// TXT/HTML/DOCX output plugins are Phase 6 follow-up per
-/// `ANYFORM-FULL-SPEC.md` §6.
+/// input; PDF/EPUB/TXT/HTML/DOCX output. Kindle formats are normalized to
+/// EPUB by the bundled `boko` binary, so they reach every output format
+/// below without a dedicated path each. PDF is the only format needing an
+/// external rendering engine (bundled headless Chromium); the other four
+/// are pure Rust — EPUB is a faithful repackage of the IR, TXT/DOCX share
+/// `htmltext.rs`'s chapter-XHTML extractor, HTML emits markup directly.
 pub fn document_registry() -> Registry<DocumentIR> {
     let mut r = Registry::new();
     r.add_input(Arc::new(EpubInput));
