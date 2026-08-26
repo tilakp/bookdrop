@@ -376,7 +376,7 @@ fn typography_css(opts: &RenderOptions) -> String {
     format!(
         "html, body {{ margin: 0 !important; }} \
          body {{ font-size: {}pt !important; line-height: {} !important;{font_family_rule} }} \
-         {IMAGE_FIT_CSS}",
+         {SHRINK_TO_FIT_CSS}",
         opts.font_size_pt, opts.line_spacing
     )
 }
@@ -391,8 +391,19 @@ fn typography_css(opts: &RenderOptions) -> String {
 /// side in the rendered PDF. Applied unconditionally (not tied to any
 /// typography option) since this is a correctness fix, not a style choice:
 /// an image that already fits is unaffected by `max-width: 100%`.
-const IMAGE_FIT_CSS: &str =
-    "img, svg { max-width: 100% !important; height: auto !important; } table { max-width: 100% !important; }";
+///
+/// `pre`/`code` blocks hit the exact same "no shrink to fit" failure mode:
+/// a long unbroken line (a URL, a hex digest, an unwrapped code line)
+/// clips at the page edge instead of wrapping - confirmed with a synthetic
+/// fixture (`css-edge-cases.epub`) before adding this rule. CSS multi-
+/// column layouts (`column-count`) were audited the same way and turned
+/// out *not* to reproduce a clipping bug: Chrome sizes columns to fit
+/// their container rather than overflowing it, so no override is added for
+/// that case - there was no confirmed failure to fix.
+const SHRINK_TO_FIT_CSS: &str = "img, svg { max-width: 100% !important; height: auto !important; } \
+     table { max-width: 100% !important; } \
+     pre, code { white-space: pre-wrap !important; overflow-wrap: break-word !important; \
+     word-break: break-word !important; max-width: 100% !important; }";
 
 /// Inserts `<style>{css}</style>` into `head`. EPUB content documents are
 /// XHTML, which mandates lowercase element names, so a literal (not

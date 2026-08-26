@@ -1230,40 +1230,37 @@ bigger or needs more scoping before starting.
 
 **Near-term, scoped, worth doing next:**
 
-- **A permanent real-book regression suite.** The 2-chapter test fixture
-  has now missed two real bugs (pagination collapse, duplicate cover) and
-  a live user report caught a third (images clipping past the page edge)
-  that no test caught either. Commit 2-3 real, diverse EPUBs to
-  `anyform-doc/tests/fixtures/` as a permanent addition: one image-heavy,
-  one with footnotes/endnotes and a large index, one with tables. Pick
-  ones that are legally redistributable (public domain, or something we
-  have rights to) since these ship in the git history. This is the
-  single highest-leverage thing to do before touching the engine again.
-- **Parallel chapter rendering.** Measured directly this session: every
-  chapter takes roughly the same ~1s wall-clock time regardless of actual
-  content length, meaning the cost is per-navigation CDP round-trip
-  overhead × chapter count, not rendering work. calibre gets its speed
-  advantage from rendering multiple chapters concurrently across a worker
-  pool sized to CPU core count, not from a fundamentally different
-  rendering approach (confirmed by reading their actual `html_writer.py`).
-  The same fix applies here: open a handful of tabs on the one bundled
-  Chromium instance (or a small pool of `chrome-headless-shell`
-  processes) and render chapters concurrently instead of one at a time.
-  Should cut wall-clock time roughly in proportion to core count on a
-  modern Mac. Needs care around: merge-step ordering (chapters must still
-  end up in spine order regardless of which finishes rendering first),
-  and cancellation (a cancelled conversion needs to stop all in-flight
-  tabs, not just the current one).
-- **A broader defensive-CSS audit.** The image-clipping fix (unconditional
-  `max-width: 100%` on img/svg/table) closed one real gap. Chrome's
-  `print_to_pdf` has no "shrink to fit" behavior at all, so anything
-  wider than the printable area clips rather than scales, and EPUBs in
-  the wild are inconsistent about constraining their own content. Worth
-  auditing for the same failure shape elsewhere: wide unconstrained
-  `<pre>`/code blocks, CSS multi-column layouts, absolutely-positioned
-  decorative elements. calibre's own pipeline doesn't defend against
-  these either (checked directly), so there's no reference implementation
-  to copy here, it's audit-and-harden work specific to us.
+- ~~**A permanent real-book regression suite.**~~ Done. Four real,
+  public-domain Gutenberg EPUBs committed to `anyform-doc/tests/fixtures/`
+  (`doctor-dolittle.epub` - image-heavy, `pride-and-prejudice.epub` - long
+  many-chapter novel, `origin-of-species.epub` - footnotes + glossary +
+  large index, `scientific-american-supplement.epub` - real `<table>`
+  markup), with `real_book_tests.rs` asserting page-count sanity and known
+  text content against each. All bounds/strings were calibrated against
+  actual conversion output, not guessed.
+- ~~**Parallel chapter rendering.**~~ Done. Chapters now render across a
+  pool of Chrome tabs (`render_chapters_parallel` in `pdf.rs`) sized to
+  `available_parallelism` (capped at 8), matching calibre's own
+  CPU-count-sized worker pool. Measured 4.2x speedup on the 29-chapter
+  Origin of Species fixture (41.0s to 9.7s on an 8-core Mac). Verified
+  spine order survives even though workers finish wildly out of order,
+  and that cancellation (polled independently by every worker against the
+  same shared flag) actually stops in-flight tabs rather than running
+  each chunk to completion - this had zero prior Rust-level test coverage.
+- ~~**A broader defensive-CSS audit.**~~ Done, partially. Wide unwrapped
+  `<pre>`/`<code>` blocks hit the exact same "no shrink to fit" clipping
+  bug as images - confirmed by rendering a synthetic fixture
+  (`css-edge-cases.epub`) before and after, screenshot showed a line
+  cut off mid-word. Fixed with `white-space: pre-wrap` +
+  `overflow-wrap: break-word`. CSS multi-column layouts were audited the
+  same way and did *not* reproduce a clipping bug - Chrome sizes columns
+  to fit their container rather than overflowing it - so no fix was
+  applied there; a hypothesis that didn't hold up under an actual test.
+  Absolutely-positioned decorative elements are still unaudited: no
+  concrete failure case or real fixture surfaced one, and a blanket CSS
+  override for arbitrary `position: absolute` content risks breaking
+  legitimate use (footnote markers, etc.) without evidence it's needed.
+  Left for whenever a real book actually exercises it.
 - **DRM font deobfuscation.** Called out as deferred back in Phase 1
   ("unless a DRM'd fixture surfaces the need") and never revisited.
   Adobe/IDPF font obfuscation is common enough in real-world EPUBs

@@ -155,6 +155,40 @@ fn page_numbers_and_headers_appear_in_rendered_text() {
     assert!(all_text.contains('1') && all_text.contains('2'), "expected page numbers 1 and 2");
 }
 
+#[test]
+fn wide_pre_blocks_wrap_instead_of_clipping() {
+    // css-edge-cases.epub has a <pre><code> block with one long unbroken
+    // line, wider than the printable page - the same "no shrink to fit"
+    // failure mode that caused the earlier image-clipping bug, confirmed
+    // by visually rendering this exact fixture before adding the fix (a
+    // saved screenshot showed the line cut off mid-word at the page
+    // edge). CSS multi-column layout was audited the same way and did
+    // *not* reproduce a clipping bug - Chrome sizes columns to fit their
+    // container - so no corresponding fix/test exists for that case.
+    let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/css-edge-cases.epub");
+    let output = std::env::temp_dir().join(format!("anyform-pdf-test-wide-pre-{}.pdf", std::process::id()));
+    let registry = anyform_doc::document_registry();
+    registry.convert(&fixture, &output, &Options::new(), &StdLog).expect("css-edge-cases.epub should convert");
+    let doc = lopdf::Document::load(&output).expect("output should be a valid PDF");
+    let _ = std::fs::remove_file(&output);
+
+    // Wrapping a ~480-character unbroken line at ~15pt in a 6.5in
+    // printable width takes far more vertical space than one line, which
+    // pushes the chapter past a single page. Before the fix the same
+    // fixture produced exactly 1 page (the whole chapter, including the
+    // unwrapped code line, fit - by clipping rather than wrapping).
+    let pages = doc.get_pages().len();
+    assert!(pages >= 2, "expected the wrapped code block to overflow onto a 2nd page, got {pages} page(s)");
+
+    let page_numbers: Vec<u32> = doc.get_pages().keys().copied().collect();
+    let text: String = page_numbers.iter().map(|n| doc.extract_text(&[*n]).unwrap_or_default()).collect();
+    assert!(text.contains("codewordcodeword"), "expected the code block's text content to survive");
+    // Wrapped lines extract with a newline between them rather than a
+    // space, so check the two halves of a known phrase separately instead
+    // of the exact run.
+    assert!(text.contains("Decorative column") && text.contains("paragraph 1"), "expected the multi-column section's text to survive");
+}
+
 /// Reports cancelled once `progress()` has been called `after` times -
 /// simulates a user hitting cancel partway through a real conversion.
 struct CancelAfter {
