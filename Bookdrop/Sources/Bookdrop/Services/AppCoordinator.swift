@@ -143,8 +143,6 @@ final class AppCoordinator: ObservableObject {
             screen = .complete(info)
         } catch is CancellationError {
             screen = .loaded(book)
-        } catch PdfConverterError.cancelled {
-            screen = .loaded(book)
         } catch RustConversionEngineError.cancelled {
             screen = .loaded(book)
         } catch let error as LocalizedError {
