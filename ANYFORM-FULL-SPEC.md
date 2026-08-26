@@ -1345,17 +1345,26 @@ bigger or needs more scoping before starting.
   `roxmltree` is already a dependency, writing the plugin directly is
   likely better than taking the dep. **DOCX-in** unstarted.
 
-  **App-layer integration is not done.** The engine and CLI fully support
-  Kindle input, but Bookdrop itself still parses with the Swift-native
-  `EpubParser` and its file picker/drag-drop only accept `.epub`. The
-  design decision to make first: the FFI's `BookInfo` carries no
-  `content_dir`, so the Swift TXT/HTML/DOCX converters (which read chapter
-  files off disk) cannot consume a Rust parse as-is. Either add
-  `content_dir` to `BookInfo` and teach Swift to build a `Book` from that
-  JSON, or normalize at the app boundary — run boko on load, hand the
-  resulting `.epub` to the existing `EpubParser`, and leave everything
-  downstream untouched. The second is far smaller and unlocks all four
-  output formats immediately.
+  ~~**App-layer integration.**~~ Done (2026-08-25), via the smaller of the
+  two options above: normalize at the app boundary. `KindleNormalizer`
+  (`Sources/Bookdrop/Services/KindleNormalizer.swift`) runs the bundled
+  `boko` binary on load for AZW3/AZW/KFX/MOBI, hands the resulting `.epub`
+  to the existing `EpubParser`, then overwrites the parsed `Book`'s
+  `sourceURL`/`fileSizeBytes` back to the *original* file — so "Convert
+  Again" (`HistoryEntry.sourcePath`) and the Rust engine's own `.pdf` path
+  (which re-reads `book.sourceURL` through its registry, independently
+  normalizing again there) both keep working unchanged. Every existing
+  EPUB call site (`AppCoordinator.handleSingleFile`,
+  `MultiConversionModel.run`) now calls `KindleNormalizer.parse` instead
+  of `EpubParser.parse` directly — a plain EPUB passes straight through
+  without touching the subprocess at all. File picker and drag-drop
+  updated to accept the Kindle extensions too. Verified from inside the
+  actual signed `.app` (not just `swift test`'s dev-tree fallback): the
+  bundled `boko` binary hash-matches the vendored copy, carries its own
+  valid ad-hoc signature nested inside the app, and runs correctly when
+  launched as a child process the same way `Process.run()` would — the
+  exact failure class ("SIGTRAPs as a child of a signed app") that broke
+  Chromium bundling earlier this session.
 - **Universal (arm64 + x86_64) Bookdrop binary.** Both Chromium
   architectures are already bundled (this session), but the Swift
   executable itself is still host-arch-only (`swift build` with no

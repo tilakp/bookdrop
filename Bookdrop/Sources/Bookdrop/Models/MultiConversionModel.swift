@@ -56,7 +56,7 @@ final class MultiConversionModel: ObservableObject {
 
             let sourceURL = jobs[index].sourceURL
             do {
-                let book = try EpubParser.parse(fileAt: sourceURL)
+                let book = try KindleNormalizer.parse(fileAt: sourceURL)
                 let outputURL = nextAvailableURL(
                     directory: outputDirectory, baseName: sanitizedFilename(book.title),
                     extension: format.fileExtension)
@@ -77,7 +77,8 @@ final class MultiConversionModel: ObservableObject {
                 jobs[index].status = .done(resultURL)
                 historyStore.add(
                     HistoryEntry(
-                        title: book.title, conversionLabel: "EPUB → \(format.rawValue)",
+                        title: book.title,
+                        conversionLabel: "\(book.sourceURL.pathExtension.uppercased()) → \(format.rawValue)",
                         outputPath: resultURL.path, sourcePath: sourceURL.path))
             } catch {
                 jobs[index].status = .failed(error.localizedDescription)

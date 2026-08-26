@@ -50,7 +50,7 @@ final class AppCoordinator: ObservableObject {
 
     func handleSingleFile(_ url: URL) {
         do {
-            let book = try EpubParser.parse(fileAt: url)
+            let book = try KindleNormalizer.parse(fileAt: url)
             pdfOptions.preserveEpubStyling = settingsStore.preserveOriginalStylingByDefault
             outputDirectory = Self.defaultOutputDirectory(
                 for: settingsStore.defaultOutputLocation, sourceURL: url)
@@ -60,9 +60,14 @@ final class AppCoordinator: ObservableObject {
                 message: error.errorDescription ?? "This EPUB couldn't be read.",
                 hint: "Try another file, or choose a different output format.",
                 technicalDetails: String(describing: error))
+        } catch let error as KindleNormalizerError {
+            screen = .error(
+                message: error.errorDescription ?? "This Kindle file couldn't be read.",
+                hint: "Try another file, or choose a different output format.",
+                technicalDetails: String(describing: error))
         } catch {
             screen = .error(
-                message: "This EPUB couldn't be read.", hint: nil,
+                message: "This file couldn't be read.", hint: nil,
                 technicalDetails: String(describing: error))
         }
     }
@@ -120,7 +125,8 @@ final class AppCoordinator: ObservableObject {
             let info = CompletionInfo(outputURL: resultURL, pageCount: pageCount)
             historyStore.add(
                 HistoryEntry(
-                    title: book.title, conversionLabel: "EPUB → \(outputFormat.rawValue)",
+                    title: book.title,
+                    conversionLabel: "\(book.sourceURL.pathExtension.uppercased()) → \(outputFormat.rawValue)",
                     outputPath: resultURL.path, sourcePath: book.sourceURL.path))
 
             if performSideEffects {

@@ -10,7 +10,11 @@ struct EmptyStateView: View {
 
     @State private var isTargeted = false
 
-    private static let epubType = UTType(filenameExtension: "epub") ?? .data
+    /// EPUB plus every Kindle-family extension `KindleNormalizer` accepts
+    /// (see its `kindleExtensions`) — none of these have a built-in system
+    /// UTType, so each is declared from its filename extension directly.
+    private static let acceptedExtensions = ["epub"] + KindleNormalizer.kindleExtensions.sorted()
+    private static let acceptedTypes: [UTType] = acceptedExtensions.compactMap { UTType(filenameExtension: $0) }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -83,7 +87,7 @@ struct EmptyStateView: View {
         )
         .onDrop(of: [.fileURL], isTargeted: $isTargeted, perform: handleDrop)
         .accessibilityLabel("Ebook drop zone")
-        .accessibilityHint("Drag an EPUB file here, or use the Choose File button below")
+        .accessibilityHint("Drag an EPUB or Kindle ebook file here, or use the Choose File button below")
     }
 
     private var recentConversions: some View {
@@ -132,17 +136,17 @@ struct EmptyStateView: View {
     }
 
     private func handleDrop(providers: [NSItemProvider]) -> Bool {
-        let epubProviders = providers.filter { $0.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) }
-        guard !epubProviders.isEmpty else { return false }
+        let fileProviders = providers.filter { $0.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) }
+        guard !fileProviders.isEmpty else { return false }
 
         let collected = NSMutableArray()
         let group = DispatchGroup()
-        for provider in epubProviders {
+        for provider in fileProviders {
             group.enter()
             provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier) { item, _ in
                 if let data = item as? Data,
                     let url = URL(dataRepresentation: data, relativeTo: nil),
-                    url.pathExtension.lowercased() == "epub"
+                    Self.acceptedExtensions.contains(url.pathExtension.lowercased())
                 {
                     collected.add(url)
                 }
@@ -158,7 +162,7 @@ struct EmptyStateView: View {
 
     private func presentOpenPanel() {
         let panel = NSOpenPanel()
-        panel.allowedContentTypes = [Self.epubType]
+        panel.allowedContentTypes = Self.acceptedTypes
         panel.allowsMultipleSelection = true
         panel.canChooseDirectories = false
         if panel.runModal() == .OK, !panel.urls.isEmpty {
