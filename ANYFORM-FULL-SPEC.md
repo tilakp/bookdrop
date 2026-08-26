@@ -1269,12 +1269,26 @@ bigger or needs more scoping before starting.
   "fonts render as garbage" bug report. Needs a real DRM'd fixture to
   develop against, which is the main blocker, not the deobfuscation
   algorithm itself (it's a well-documented, simple XOR-based scheme).
-- **Verify internal EPUB links survive conversion.** Footnote/endnote
-  jump-links and cross-references are common in nonfiction (the two real
-  books tested this session both had them). Never explicitly verified
-  that an in-book `<a href="#note3">` link still jumps to the right place
-  once merged into the final PDF. Worth a dedicated test now that we have
-  real books with this structure to test against.
+~~**Verify internal EPUB links survive conversion.**~~ Done - and it
+  turned out they didn't survive at all, a real bug, not just an
+  unverified assumption. EPUB footnote/cross-reference links are written
+  as `<a href="thisfile.html#note3">` even when linking within the same
+  file, and Chrome only recognizes a fragment link as same-document
+  navigation when the href resolves to the exact URL of the page loaded -
+  every chapter rendered from a renamed temp file (`__anyform_render_N`),
+  so *every* internal link, same-chapter or cross-chapter, silently
+  became a dead `file://` URI pointing at a temp file deleted right after
+  rendering. Fixed two ways: chapters now render in place under their
+  original filename (temporarily overwritten, then restored - safe since
+  worker threads never share a chapter's file), so same-chapter links get
+  Chrome's native working destination again; and a post-merge pass
+  (`fix_cross_chapter_links`) repairs remaining cross-chapter dead links,
+  either to the exact anchor (if the target chapter's fragment survived
+  into the merged Dests dictionary) or to the top of the target chapter as
+  a fallback. Verified on Origin of Species: 1296 dead links before the
+  fix, 0 after (8 legitimate external Gutenberg links correctly left
+  alone, 6 exact same-chapter footnote jumps, 1282 chapter-top jumps for
+  cross-chapter references).
 
 **Medium-term, needs scoping before starting:**
 

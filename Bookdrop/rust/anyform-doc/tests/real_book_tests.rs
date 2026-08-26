@@ -114,6 +114,55 @@ fn scientific_american_tables_render_as_readable_text() {
     );
 }
 
+// Origin of Species has real footnote links within a chapter
+// (<a href="thisfile.html#fn1">) and cross-reference links into other
+// chapters (an index page linking into specific chapters) - both were
+// silently dead after conversion: Chrome resolves a fragment link as
+// same-document navigation only when the href's filename exactly matches
+// the URL of the page it's loaded from, and every chapter used to render
+// from a renamed temp file, so *no* internal link (same-chapter or
+// cross-chapter) ever matched. Verifies no dead file:// links survive,
+// and that at least one link became a real named destination pointing at
+// an actual page in the merged document (not just a chapter-top
+// fallback).
+#[test]
+fn origin_of_species_internal_links_do_not_go_dead() {
+    let doc = convert("links", "origin-of-species.epub");
+    let page_ids: std::collections::HashSet<lopdf::ObjectId> = doc.get_pages().into_values().collect();
+
+    let mut dead_file_links = 0usize;
+    let mut named_dest_targets: Vec<Vec<u8>> = Vec::new();
+    for object in doc.objects.values() {
+        let Ok(dict) = object.as_dict() else { continue };
+        if dict.get(b"Subtype").and_then(|o| o.as_name()).unwrap_or(b"") != b"Link" {
+            continue;
+        }
+        if let Ok(uri) = dict.get(b"A").and_then(|a| a.as_dict()).and_then(|a| a.get(b"URI")).and_then(|u| u.as_str()) {
+            if uri.starts_with(b"file://") {
+                dead_file_links += 1;
+            }
+        }
+        if let Ok(name) = dict.get(b"Dest").and_then(|d| d.as_name()) {
+            named_dest_targets.push(name.to_vec());
+        }
+    }
+
+    assert_eq!(dead_file_links, 0, "no internal link should still point at a deleted temp render file");
+    assert!(!named_dest_targets.is_empty(), "expected at least one exact-anchor named destination (a same-chapter footnote link)");
+
+    // Every named destination should resolve, through the merged Dests
+    // dictionary, to a page that actually exists in this document - not a
+    // dangling reference into a chapter's now-discarded local object
+    // table.
+    let dests = doc.catalog().unwrap().get(b"Dests").and_then(|d| d.as_reference()).and_then(|id| doc.get_object(id)).and_then(|o| o.as_dict()).expect("catalog should reference a merged Dests dictionary");
+    for name in &named_dest_targets {
+        let target = dests.get(name).unwrap_or_else(|_| panic!("Dests dict missing entry for {name:?}"));
+        let array = target.as_array().expect("a destination should be an array [page /Fit ...]");
+        let page_ref = array.first().and_then(|o| o.as_reference().ok()).expect("destination array's first element should be a page reference");
+        assert!(page_ids.contains(&page_ref), "named destination {name:?} points at a page not present in the merged document");
+    }
+}
+
 // All four real fixtures should exist and be non-trivial in size; catches
 // an accidentally-corrupted or emptied fixture file before it silently
 // starts producing meaningless "conversion succeeded" passes.

@@ -106,7 +106,10 @@ impl OutputPlugin<DocumentIR> for PdfOutput {
             return Err(ConvError::Cancelled);
         }
         log.progress(0.92, "Merging pages");
-        let mut merged = merge_chapter_pdfs(chunks, &ir.toc, render_opts.generate_toc)?;
+        let href_to_prefix: HashMap<String, String> =
+            ir.spine.iter().enumerate().map(|(i, item)| (item.href.clone(), format!("c{i}"))).collect();
+        let mut merged =
+            merge_chapter_pdfs(chunks, &ir.toc, render_opts.generate_toc, &ir.content_dir, &href_to_prefix)?;
 
         log.progress(0.96, "Adding page decorations");
         add_page_decorations(&mut merged, &render_opts, &ir.metadata.title)?;
@@ -174,12 +177,11 @@ fn render_chapters_parallel(
                         }
                         let item = &spine[i];
                         let original_path = content_dir.join(&item.href);
-                        let render_path = prepare_chapter_html(&original_path, i, render_opts)?;
-                        let doc = render_one_chapter(&tab, &render_path, &item.href, render_opts);
-                        if render_path != original_path {
-                            let _ = std::fs::remove_file(&render_path);
-                        }
-                        let doc = doc?;
+                        let original_bytes = prepare_chapter_html(&original_path, render_opts)?;
+                        let doc = render_one_chapter(&tab, &original_path, &item.href, render_opts);
+                        let _ = std::fs::write(&original_path, &original_bytes);
+                        let mut doc = doc?;
+                        namespace_chapter_dests(&mut doc, &format!("c{i}"));
 
                         let done = done_count.fetch_add(1, Ordering::SeqCst) + 1;
                         log.info(&format!("rendering {} ({done}/{total_steps})", item.href));
@@ -223,6 +225,63 @@ fn render_one_chapter(tab: &Tab, render_path: &Path, href: &str, opts: &RenderOp
         .print_to_pdf(Some(chapter_print_options(opts)))
         .map_err(|e| ConvError::Other(format!("print_to_pdf failed for {href}: {e}")))?;
     lopdf::Document::load_mem(&bytes).map_err(|e| ConvError::Other(format!("failed to parse rendered PDF for {href}: {e}")))
+}
+
+/// Chrome's print_to_pdf turns a same-document fragment link (`<a
+/// href="thisfile.html#note3">`, which is how EPUB footnote/cross-
+/// reference links are written even when the target is in the very file
+/// being printed) into a working `/Dest /note3` link annotation plus a
+/// `/Dests` name dictionary on that chapter's own catalog mapping
+/// `note3` to an exact page/position - confirmed empirically before
+/// writing this. Since every chapter is printed as an independent
+/// single-file PDF, each chapter's dest names live in their own
+/// namespace and would collide across chapters once merged (e.g. two
+/// different chapters both defining `fn1`). This renames every entry in
+/// this chapter's own Dests dictionary to `{prefix}::{name}`, and
+/// rewrites this chapter's own Link annotations to match, so the
+/// destinations survive `merge_chapter_pdfs` consolidating every
+/// chapter's Dests dictionary into one on the merged document without
+/// colliding.
+fn namespace_chapter_dests(doc: &mut lopdf::Document, prefix: &str) {
+    let dests_id = doc
+        .objects
+        .values()
+        .find(|o| o.type_name().unwrap_or(b"") == b"Catalog")
+        .and_then(|cat| cat.as_dict().ok())
+        .and_then(|d| d.get(b"Dests").ok())
+        .and_then(|o| o.as_reference().ok());
+    let Some(dests_id) = dests_id else { return };
+
+    let old_names: Vec<Vec<u8>> = match doc.get_object(dests_id).and_then(|o| o.as_dict()) {
+        Ok(d) => d.iter().map(|(k, _)| k.clone()).collect(),
+        Err(_) => return,
+    };
+    if old_names.is_empty() {
+        return;
+    }
+
+    if let Ok(dict) = doc.get_object_mut(dests_id).and_then(|o| o.as_dict_mut()) {
+        let mut renamed = Dictionary::new();
+        for (key, value) in dict.iter() {
+            renamed.set(format!("{prefix}::{}", String::from_utf8_lossy(key)), value.clone());
+        }
+        *dict = renamed;
+    }
+
+    let old_name_set: std::collections::HashSet<Vec<u8>> = old_names.into_iter().collect();
+    for object in doc.objects.values_mut() {
+        let Ok(dict) = object.as_dict_mut() else { continue };
+        if dict.get(b"Subtype").and_then(|o| o.as_name()).unwrap_or(b"") != b"Link" {
+            continue;
+        }
+        if let Ok(Object::Name(name)) = dict.get_mut(b"Dest") {
+            if old_name_set.contains(name.as_slice()) {
+                let mut renamed = format!("{prefix}::").into_bytes();
+                renamed.extend_from_slice(name);
+                *name = renamed;
+            }
+        }
+    }
 }
 
 /// Mirrors Bookdrop's Swift `PDFOptions` (`Sources/Bookdrop/Models/PDFOptions.swift`)
@@ -336,10 +395,29 @@ fn style_strip_regexes() -> &'static StyleStripRegexes {
 /// if requested, the EPUB's own styling stripped) to a sibling temp file,
 /// returning its path — or `original` unchanged if no overrides apply, so
 /// callers can skip cleanup in that case.
-fn prepare_chapter_html(original: &Path, index: usize, opts: &RenderOptions) -> Result<PathBuf, ConvError> {
-    let needs_strip = !opts.preserve_epub_styling || opts.remove_publisher_styling;
-    let mut html = std::fs::read_to_string(original)
+/// Overwrites `original` in place with typography overrides injected (and,
+/// if requested, the EPUB's own styling stripped), returning the original
+/// bytes so the caller can restore them after rendering. Each chapter has
+/// its own unique source file and worker threads process disjoint spine
+/// indices, so no two workers ever touch the same path concurrently.
+///
+/// Rendering in place (same filename, same directory - not a renamed
+/// sibling temp file, which an earlier version of this used) matters for
+/// more than avoiding a rename: EPUB footnote/cross-reference links are
+/// written as `<a href="thisfile.xhtml#note3">` even when the target is
+/// in the very file being linked from, and Chrome only recognizes a
+/// fragment link as same-document navigation (producing a working
+/// `/Dest`) when the href resolves to the *exact* URL of the page
+/// actually loaded - confirmed empirically: pointing Chrome at a renamed
+/// copy of a file whose own links reference the original filename turned
+/// every internal link, including same-chapter ones, into a dead `file://`
+/// URI post-merge. See `namespace_chapter_dests`/`fix_cross_chapter_links`
+/// for how the resulting links are carried through the merge.
+fn prepare_chapter_html(original: &Path, opts: &RenderOptions) -> Result<Vec<u8>, ConvError> {
+    let original_bytes = std::fs::read(original)
         .map_err(|e| ConvError::Other(format!("failed to read {}: {e}", original.display())))?;
+    let needs_strip = !opts.preserve_epub_styling || opts.remove_publisher_styling;
+    let mut html = String::from_utf8_lossy(&original_bytes).into_owned();
 
     if needs_strip {
         let re = style_strip_regexes();
@@ -352,20 +430,8 @@ fn prepare_chapter_html(original: &Path, index: usize, opts: &RenderOptions) -> 
     let css = typography_css(opts);
     html = inject_style(&html, &css);
 
-    // Keep the original extension (almost always .xhtml): renaming to
-    // .html changes how Chrome parses the file — lenient HTML5 tag-soup
-    // parsing instead of strict XHTML/XML parsing — which produced a
-    // *different DOM* for real book markup (dropcap spans, epub:-namespaced
-    // attributes, etc.) and silently collapsed pagination to 1-3 pages
-    // regardless of actual content length. A 2-chapter test fixture never
-    // exercised markup complex enough to trip this; a real book did.
-    let ext = original.extension().and_then(|e| e.to_str()).unwrap_or("xhtml");
-    let render_path = original
-        .parent()
-        .unwrap_or(original)
-        .join(format!("__anyform_render_{index}.{ext}"));
-    std::fs::write(&render_path, html)?;
-    Ok(render_path)
+    std::fs::write(original, html)?;
+    Ok(original_bytes)
 }
 
 fn typography_css(opts: &RenderOptions) -> String {
@@ -551,12 +617,20 @@ fn merge_chapter_pdfs(
     chunks: Vec<(Option<String>, lopdf::Document)>,
     toc: &[TocNode],
     generate_toc: bool,
+    content_dir: &Path,
+    href_to_prefix: &HashMap<String, String>,
 ) -> Result<lopdf::Document, ConvError> {
     let mut max_id = 1u32;
     let mut documents_pages: BTreeMap<ObjectId, Object> = BTreeMap::new();
     let mut documents_objects: BTreeMap<ObjectId, Object> = BTreeMap::new();
     let mut document = lopdf::Document::with_version("1.5");
     let mut href_to_first_page: HashMap<String, ObjectId> = HashMap::new();
+    // Consolidated from every chapter's own (already namespace-prefixed by
+    // `namespace_chapter_dests`) Dests dictionary - see that function's
+    // doc comment. Collected here, after renumbering, so each entry's
+    // destination array already points at this chapter's final,
+    // globally-unique page object id.
+    let mut merged_dests = Dictionary::new();
 
     for (href, mut doc) in chunks {
         doc.renumber_objects_with(max_id);
@@ -573,6 +647,21 @@ fn merge_chapter_pdfs(
         }
         if let (Some(href), Some(page_id)) = (href, first_page) {
             href_to_first_page.insert(href, page_id);
+        }
+
+        if let Some(dests) = doc
+            .objects
+            .values()
+            .find(|o| o.type_name().unwrap_or(b"") == b"Catalog")
+            .and_then(|cat| cat.as_dict().ok())
+            .and_then(|d| d.get(b"Dests").ok())
+            .and_then(|o| o.as_reference().ok())
+            .and_then(|id| doc.get_object(id).ok())
+            .and_then(|o| o.as_dict().ok())
+        {
+            for (key, value) in dests.iter() {
+                merged_dests.set(key.clone(), value.clone());
+            }
         }
 
         documents_objects.extend(doc.objects);
@@ -645,6 +734,15 @@ fn merge_chapter_pdfs(
     document.trailer.set("Root", catalog_id);
     document.max_id = document.objects.len() as u32;
 
+    let dest_names: std::collections::HashSet<Vec<u8>> = merged_dests.iter().map(|(k, _)| k.clone()).collect();
+    if !merged_dests.is_empty() {
+        let dests_id = document.add_object(Object::Dictionary(merged_dests));
+        if let Ok(Object::Dictionary(dict)) = document.get_object_mut(catalog_id) {
+            dict.set("Dests", Object::Reference(dests_id));
+        }
+    }
+    fix_cross_chapter_links(&mut document, content_dir, href_to_prefix, &href_to_first_page, &dest_names);
+
     if generate_toc {
         // Bookmarks must be added before the final renumber below — lopdf's
         // renumber_objects_with() walks self.bookmark_table and remaps each
@@ -665,6 +763,66 @@ fn merge_chapter_pdfs(
     }
 
     Ok(document)
+}
+
+/// A link from one chapter to a fragment in *another* chapter (a common
+/// nonfiction pattern: cross-references, an index linking into chapters)
+/// can't become a working same-document destination during rendering -
+/// each chapter is printed as an independent single-file PDF, so Chrome
+/// has no way to know the target exists at all. It falls back to a `/URI`
+/// action pointing at the target chapter's original file path (resolved
+/// against the temp render file's own location), which is dead once the
+/// temp files are cleaned up. This repairs those: if the target chapter
+/// was also rendered and the exact fragment survived into the merged
+/// Dests dictionary (via `namespace_chapter_dests`), the link becomes an
+/// exact jump to that anchor; otherwise, if the target chapter is known
+/// at all, it falls back to a jump to the top of that chapter rather than
+/// leaving a link that does nothing.
+fn fix_cross_chapter_links(
+    document: &mut lopdf::Document,
+    content_dir: &Path,
+    href_to_prefix: &HashMap<String, String>,
+    href_to_first_page: &HashMap<String, ObjectId>,
+    dest_names: &std::collections::HashSet<Vec<u8>>,
+) {
+    let path_to_href: HashMap<String, &String> =
+        href_to_prefix.keys().map(|href| (format!("file://{}", content_dir.join(href).display()), href)).collect();
+    if path_to_href.is_empty() {
+        return;
+    }
+
+    for object in document.objects.values_mut() {
+        let Ok(dict) = object.as_dict_mut() else { continue };
+        if dict.get(b"Subtype").and_then(|o| o.as_name()).unwrap_or(b"") != b"Link" {
+            continue;
+        }
+        let Ok(uri_bytes) = dict.get(b"A").and_then(|a| a.as_dict()).and_then(|a| a.get(b"URI")).and_then(|u| u.as_str())
+        else {
+            continue;
+        };
+        let uri = String::from_utf8_lossy(uri_bytes).into_owned();
+        let (path, fragment) = match uri.split_once('#') {
+            Some((p, f)) => (p, Some(f)),
+            None => (uri.as_str(), None),
+        };
+        let Some(href) = path_to_href.get(path) else { continue };
+        let prefix = &href_to_prefix[*href];
+
+        let exact = fragment
+            .map(|f| format!("{prefix}::{f}"))
+            .filter(|name| dest_names.contains(name.as_bytes()))
+            .map(|name| Object::Name(name.into_bytes()));
+        let fallback = || {
+            href_to_first_page
+                .get(*href)
+                .map(|page_id| Object::Array(vec![Object::Reference(*page_id), Object::Name(b"Fit".to_vec())]))
+        };
+
+        if let Some(dest) = exact.or_else(fallback) {
+            dict.remove(b"A");
+            dict.set("Dest", dest);
+        }
+    }
 }
 
 fn add_toc_bookmarks(
