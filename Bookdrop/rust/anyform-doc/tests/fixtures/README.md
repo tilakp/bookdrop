@@ -1,10 +1,13 @@
 # Test fixtures
 
-`minimal.epub` and `css-edge-cases.epub` are small synthetic fixtures used
-for fast, targeted unit tests (see `pdf_tests.rs`, `epub_tests.rs`).
-`css-edge-cases.epub` has a wide unwrapped `<pre><code>` block and a CSS
-`column-count` layout, purpose-built to exercise Chrome print's lack of
-"shrink to fit" (see `wide_pre_blocks_wrap_instead_of_clipping`).
+`minimal.epub`, `css-edge-cases.epub`, and `drm-fonts.epub` are small
+synthetic fixtures used for fast, targeted unit tests (see `pdf_tests.rs`,
+`epub_tests.rs`). `css-edge-cases.epub` has a wide unwrapped `<pre><code>`
+block and a CSS `column-count` layout, purpose-built to exercise Chrome
+print's lack of "shrink to fit" (see `wide_pre_blocks_wrap_instead_of_clipping`).
+`drm-fonts.epub` has two fonts obfuscated with the standard IDPF and Adobe
+EPUB font-obfuscation schemes, generated independently of this codebase's
+own deobfuscation code (see `deobfuscates_both_font_obfuscation_schemes`).
 
 The rest are real books used by `real_book_tests.rs`, a regression suite
 against actual, structurally diverse content instead of only the synthetic

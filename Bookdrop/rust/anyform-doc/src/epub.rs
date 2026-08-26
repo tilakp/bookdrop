@@ -14,6 +14,20 @@ struct OpfDocument {
     spine_idrefs: Vec<String>,
     toc_ncx_id: Option<String>,
     cover_meta_content_id: Option<String>,
+    /// The package element's `unique-identifier` attribute — an id
+    /// reference into `identifiers` — plus every `<dc:identifier>`
+    /// element's own id, `opf:scheme` attribute, and text. Needed only for
+    /// deriving the two EPUB font-obfuscation keys (see
+    /// `font_deobfuscation_keys`); everything else in this parser ignores
+    /// them.
+    unique_identifier_id: Option<String>,
+    identifiers: Vec<OpfIdentifier>,
+}
+
+struct OpfIdentifier {
+    id: Option<String>,
+    scheme: Option<String>,
+    text: String,
 }
 
 impl OpfDocument {
@@ -63,6 +77,7 @@ impl InputPlugin<DocumentIR> for EpubInput {
             .unwrap_or_else(|| work_dir.clone());
 
         let opf = parse_opf(&opf_path)?;
+        deobfuscate_fonts(&work_dir, &opf);
         let toc = parse_toc(&opf, &content_dir);
         let cover_href = opf.cover_href();
         let cover = cover_href
@@ -133,6 +148,108 @@ fn extract_epub(input: &Path) -> Result<PathBuf, ConvError> {
     Ok(work_dir)
 }
 
+const ADOBE_OBFUSCATION: &str = "http://ns.adobe.com/pdf/enc#RC";
+const IDPF_OBFUSCATION: &str = "http://www.idpf.org/2008/embedding";
+
+/// De-obfuscates any font resources `META-INF/encryption.xml` marks with
+/// one of the two standard EPUB font-obfuscation algorithms (real DRM
+/// encryption is out of scope - these are reversible obfuscation schemes
+/// meant only to deter casual font extraction, not real encryption).
+/// Matches calibre's own `process_encryption` (`epub_input.py`) byte for
+/// byte: verified against calibre's actual source rather than guessed
+/// from written descriptions of the algorithm, including the exact byte
+/// counts (1024 for Adobe, 1040 for IDPF) and key derivation for each.
+/// Best-effort throughout: a malformed or unrecognized encryption.xml, or
+/// a resource whose key can't be derived, just leaves that resource
+/// untouched (it'll render as garbled glyphs, same as if this pass didn't
+/// exist) rather than failing the whole conversion.
+fn deobfuscate_fonts(work_dir: &Path, opf: &OpfDocument) {
+    let encryption_path = work_dir.join("META-INF/encryption.xml");
+    let Ok(xml) = std::fs::read_to_string(&encryption_path) else { return };
+    let Ok(doc) = roxmltree::Document::parse(&xml) else { return };
+
+    let (idpf_key, adobe_key) = font_deobfuscation_keys(opf);
+
+    for method in doc.descendants().filter(|n| n.is_element() && n.tag_name().name() == "EncryptionMethod") {
+        let Some(algorithm) = method.attribute("Algorithm") else { continue };
+        let is_adobe = algorithm == ADOBE_OBFUSCATION;
+        if !is_adobe && algorithm != IDPF_OBFUSCATION {
+            continue;
+        }
+        let Some(key) = (if is_adobe { &adobe_key } else { &idpf_key }) else { continue };
+        let Some(parent) = method.parent() else { continue };
+        let Some(uri) =
+            parent.descendants().find(|n| n.is_element() && n.tag_name().name() == "CipherReference").and_then(|n| n.attribute("URI"))
+        else {
+            continue;
+        };
+
+        // encryption.xml resource URIs are relative to the EPUB container
+        // root (the same level as META-INF and the OPF's own directory),
+        // not to the OPF - matches how the OCF spec defines CipherReference
+        // and how calibre resolves it. Reject anything that escapes
+        // work_dir (a malicious "../.." URI) rather than deobfuscating an
+        // arbitrary file on disk.
+        let font_path = work_dir.join(uri);
+        let (Ok(canonical_work_dir), Ok(canonical_font_path)) = (work_dir.canonicalize(), font_path.canonicalize()) else {
+            continue;
+        };
+        if !canonical_font_path.starts_with(&canonical_work_dir) {
+            continue;
+        }
+
+        if let Ok(mut data) = std::fs::read(&canonical_font_path) {
+            xor_deobfuscate(&mut data, key, if is_adobe { 1024 } else { 1040 });
+            let _ = std::fs::write(&canonical_font_path, data);
+        }
+    }
+}
+
+/// The IDPF key is a SHA-1 digest of the package's declared unique
+/// identifier (the `<dc:identifier>` the package element's
+/// `unique-identifier` attribute points at) with whitespace stripped. The
+/// Adobe key is the raw 16 bytes of whichever `<dc:identifier>` is a UUID
+/// (`opf:scheme="uuid"`, or text starting with `urn:uuid:`).
+fn font_deobfuscation_keys(opf: &OpfDocument) -> (Option<Vec<u8>>, Option<Vec<u8>>) {
+    let idpf_key = opf
+        .unique_identifier_id
+        .as_deref()
+        .and_then(|id| opf.identifiers.iter().find(|i| i.id.as_deref() == Some(id)))
+        .map(|ident| {
+            let stripped: String = ident.text.chars().filter(|c| !matches!(c, ' ' | '\t' | '\r' | '\n')).collect();
+            use sha1::{Digest, Sha1};
+            Sha1::digest(stripped.as_bytes()).to_vec()
+        });
+
+    let adobe_key = opf.identifiers.iter().find_map(|ident| {
+        let is_uuid_scheme = ident.scheme.as_deref().is_some_and(|s| s.eq_ignore_ascii_case("uuid"));
+        if !is_uuid_scheme && !ident.text.starts_with("urn:uuid:") {
+            return None;
+        }
+        parse_uuid_bytes(ident.text.rsplit(':').next().unwrap_or(&ident.text))
+    });
+
+    (idpf_key, adobe_key)
+}
+
+fn parse_uuid_bytes(s: &str) -> Option<Vec<u8>> {
+    let hex: String = s.chars().filter(|c| *c != '-').collect();
+    if hex.len() != 32 || !hex.chars().all(|c| c.is_ascii_hexdigit()) {
+        return None;
+    }
+    (0..32).step_by(2).map(|i| u8::from_str_radix(&hex[i..i + 2], 16).ok()).collect()
+}
+
+fn xor_deobfuscate(data: &mut [u8], key: &[u8], crypt_len: usize) {
+    if key.is_empty() {
+        return;
+    }
+    let n = crypt_len.min(data.len());
+    for (i, byte) in data[..n].iter_mut().enumerate() {
+        *byte ^= key[i % key.len()];
+    }
+}
+
 fn parse_container(container_path: &Path) -> Result<String, ConvError> {
     let xml = std::fs::read_to_string(container_path)
         .map_err(|_| ConvError::MissingFile("META-INF/container.xml".into()))?;
@@ -158,7 +275,11 @@ fn parse_opf(opf_path: &Path) -> Result<OpfDocument, ConvError> {
         spine_idrefs: Vec::new(),
         toc_ncx_id: None,
         cover_meta_content_id: None,
+        unique_identifier_id: None,
+        identifiers: Vec::new(),
     };
+
+    result.unique_identifier_id = doc.root_element().attribute("unique-identifier").map(String::from);
 
     if let Some(metadata_el) = doc
         .descendants()
@@ -176,6 +297,16 @@ fn parse_opf(opf_path: &Path) -> Result<OpfDocument, ConvError> {
                 if !text.is_empty() {
                     result.author = Some(text);
                 }
+            } else if local == "identifier" {
+                let scheme = child
+                    .attributes()
+                    .find(|a| a.name() == "scheme")
+                    .map(|a| a.value().to_string());
+                result.identifiers.push(OpfIdentifier {
+                    id: child.attribute("id").map(String::from),
+                    scheme,
+                    text: element_text(child),
+                });
             }
         }
     }

@@ -59,6 +59,27 @@ fn extracts_readable_chapter_files() {
 }
 
 #[test]
+fn deobfuscates_both_font_obfuscation_schemes() {
+    // drm-fonts.epub's two font files were obfuscated by an independent
+    // Python script (using hashlib/uuid directly, not this codebase) that
+    // mirrors calibre's actual process_encryption implementation
+    // (epub_input.py) byte for byte - the plaintext bytes are regenerated
+    // here from the same formula the fixture-generation script used, so
+    // this checks the real deobfuscated output against a known-correct
+    // answer rather than round-tripping against our own encoder.
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/drm-fonts.epub");
+    let ir = EpubInput.convert(&path, &Options::new(), &StdLog).expect("drm-fonts.epub should parse");
+
+    let plain_adobe: Vec<u8> = (0..2000u32).map(|i| ((i * 7 + 3) % 256) as u8).collect();
+    let plain_idpf: Vec<u8> = (0..2000u32).map(|i| ((i * 11 + 17) % 256) as u8).collect();
+
+    let adobe_out = std::fs::read(ir.content_dir.join("fonts/adobe.otf")).expect("adobe font should be readable");
+    let idpf_out = std::fs::read(ir.content_dir.join("fonts/idpf.otf")).expect("idpf font should be readable");
+    assert_eq!(adobe_out, plain_adobe, "Adobe-scheme font should be fully de-obfuscated");
+    assert_eq!(idpf_out, plain_idpf, "IDPF-scheme font should be fully de-obfuscated");
+}
+
+#[test]
 fn throws_on_invalid_archive() {
     let bogus = std::env::temp_dir().join("anyform-not-a-real.epub");
     std::fs::write(&bogus, b"not a zip file").unwrap();

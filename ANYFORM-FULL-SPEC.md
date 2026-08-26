@@ -1261,14 +1261,21 @@ bigger or needs more scoping before starting.
   override for arbitrary `position: absolute` content risks breaking
   legitimate use (footnote markers, etc.) without evidence it's needed.
   Left for whenever a real book actually exercises it.
-- **DRM font deobfuscation.** Called out as deferred back in Phase 1
-  ("unless a DRM'd fixture surfaces the need") and never revisited.
-  Adobe/IDPF font obfuscation is common enough in real-world EPUBs
-  (library/retailer DRM strips it but personal-library scans and some
-  older files still carry it) that this will eventually surface as a
-  "fonts render as garbage" bug report. Needs a real DRM'd fixture to
-  develop against, which is the main blocker, not the deobfuscation
-  algorithm itself (it's a well-documented, simple XOR-based scheme).
+~~**DRM font deobfuscation.**~~ Done. No real DRM'd EPUB ever turned up to
+  develop against, so a synthetic fixture (`drm-fonts.epub`) was built
+  instead: two font files obfuscated independently (a Python script using
+  `hashlib`/`uuid` directly, not this codebase) with the exact algorithm
+  calibre's own `epub_input.py` implements - fetched and read directly
+  from calibre's source rather than trusted from a written description,
+  since a byte-count or key-derivation mistake would silently corrupt
+  fonts without any test catching it. Both EPUB font-obfuscation schemes
+  are handled: IDPF (`http://www.idpf.org/2008/embedding`, 1040 bytes, key
+  = SHA-1 of the whitespace-stripped unique identifier) and Adobe
+  (`http://ns.adobe.com/pdf/enc#RC`, 1024 bytes, key = the raw 16 bytes of
+  whichever `<dc:identifier>` is a UUID). Applied automatically whenever
+  `META-INF/encryption.xml` declares one of these two algorithms for a
+  resource; anything else (real encryption, an unrecognized algorithm) is
+  left untouched rather than guessed at.
 ~~**Verify internal EPUB links survive conversion.**~~ Done - and it
   turned out they didn't survive at all, a real bug, not just an
   unverified assumption. EPUB footnote/cross-reference links are written
