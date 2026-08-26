@@ -9,6 +9,18 @@ print's lack of "shrink to fit" (see `wide_pre_blocks_wrap_instead_of_clipping`)
 EPUB font-obfuscation schemes, generated independently of this codebase's
 own deobfuscation code (see `deobfuscates_both_font_obfuscation_schemes`).
 
+`doctype-nav.epub` and `doctype-ncx.epub` carry a DOCTYPE in their EPUB3
+nav and EPUB2 NCX TOC documents respectively. Real EPUBs very commonly do
+(the NISO ncx DOCTYPE, `<!DOCTYPE html>`), but every Gutenberg fixture here
+happens not to, which is why a DTD-rejection bug silently wiped the table
+of contents for a long time without any test noticing.
+
+`minimal.azw3` is `minimal.epub` converted by the bundled `boko` binary,
+used by `kindle_tests.rs` to assert Kindle-format input parses to the same
+`DocumentIR` as its EPUB source. Regenerate with
+`boko convert minimal.epub minimal.azw3` after running
+`rust/scripts/fetch-boko.sh`.
+
 The rest are real books used by `real_book_tests.rs`, a regression suite
 against actual, structurally diverse content instead of only the synthetic
 fixture. All are public domain, downloaded from

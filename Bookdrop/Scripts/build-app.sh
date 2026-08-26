@@ -11,6 +11,7 @@ APP_DIR="$ROOT_DIR/.build/$CONFIG/Bookdrop.app"
 
 echo "Building anyform engine (Rust)..."
 "$ROOT_DIR/rust/scripts/fetch-chromium.sh"
+"$ROOT_DIR/rust/scripts/fetch-boko.sh"
 "$ROOT_DIR/rust/scripts/build-ffi.sh"
 
 echo "Building (${CONFIG})..."
@@ -53,6 +54,30 @@ for CHROMIUM_PLATFORM in mac-arm64 mac-x64; do
     cp -R "$CHROMIUM_SRC_DIR/." "$APP_DIR/Contents/Resources/Chromium/$CHROMIUM_PLATFORM/"
     chmod +x "$APP_DIR/Contents/Resources/Chromium/$CHROMIUM_PLATFORM/chrome-headless-shell"
 done
+
+# Bundle the vendored `boko` binary for both architectures, at
+# Contents/Resources/Boko/<arch>/ — used by KindleInput to normalize
+# AZW3/KFX/MOBI into EPUB before the regular pipeline runs. Unlike
+# Chromium this *is* a standalone executable with no sibling resources,
+# so a plain file copy is enough.
+#
+# It ships as a separate program rather than linked code on purpose: boko
+# is GPL-3.0-or-later and Bookdrop is MIT (see rust/scripts/fetch-boko.sh).
+# The GPL-3 §6 source tarball and licence notice are copied in beside it so
+# the obligation travels with the .app rather than living only in the
+# build tree.
+for BOKO_PLATFORM in mac-arm64 mac-x64; do
+    BOKO_SRC="$ROOT_DIR/rust/vendor/boko/$BOKO_PLATFORM/boko"
+    if [ ! -x "$BOKO_SRC" ]; then
+        echo "build-app.sh: missing $BOKO_SRC — run rust/scripts/fetch-boko.sh" >&2
+        exit 1
+    fi
+    mkdir -p "$APP_DIR/Contents/Resources/Boko/$BOKO_PLATFORM"
+    cp "$BOKO_SRC" "$APP_DIR/Contents/Resources/Boko/$BOKO_PLATFORM/boko"
+    chmod +x "$APP_DIR/Contents/Resources/Boko/$BOKO_PLATFORM/boko"
+done
+cp "$ROOT_DIR/rust/vendor/boko/LICENSE-NOTICE.txt" "$APP_DIR/Contents/Resources/Boko/LICENSE-NOTICE.txt"
+cp "$ROOT_DIR"/rust/vendor/boko/boko-*-source.tar.gz "$APP_DIR/Contents/Resources/Boko/"
 
 # Ad-hoc sign so Gatekeeper doesn't block the bundled Chromium binary or a
 # statically-linked Rust std that isn't signed by a real Developer ID —

@@ -1314,13 +1314,48 @@ bigger or needs more scoping before starting.
   container (manifest, spine, nav document), and MOBI/AZW3 needs either a
   Rust KF8 writer (check crates.io first) or shelling out to Amazon's
   `kindlegen`-equivalent tooling.
-- **New input formats: MOBI/AZW3, FB2, DOCX-in.** Check for an existing
-  well-maintained Rust `mobi`/`azw3` crate before writing a parser from
-  scratch. FB2 (common for Russian-language ebooks) is XML-based and
-  structurally closer to EPUB's own input plugin than MOBI is. DOCX-in
-  would need real OOXML parsing (a `docx-rs`-style crate), distinct from
-  the `NSAttributedString`-based DOCX *output* the Swift path already
-  does.
+- **New input formats: MOBI/AZW3, FB2, DOCX-in.** *Kindle formats done at
+  the engine layer* (2026-08-25): `KindleInput` (`anyform-doc/src/kindle.rs`)
+  handles AZW3/AZW/KFX/MOBI by normalizing to EPUB with a bundled `boko`
+  binary and delegating to `EpubInput`, so one conversion step reaches
+  every existing output format. Verified end-to-end on a real book: AZW3 →
+  PDF gives 581 pages vs the EPUB baseline's 575 with identical bookmarks;
+  KFX → PDF gives 570 pages but only 36 of 56 bookmarks, a fidelity limit
+  of the KFX round trip rather than a pipeline bug.
+
+  `boko` is invoked as a **separate process, never linked**: it is
+  GPL-3.0-or-later and Bookdrop is MIT, so linking would force a
+  relicense. `rust/scripts/fetch-boko.sh` vendors both macOS
+  architectures with SHA-256 verification plus the GPL-3 §6 source
+  tarball and a licence notice, which `build-app.sh` copies into the
+  `.app` beside the binary.
+
+  Crate survey done at the same time, recorded so it isn't redone: the
+  established MIT option (`mobi`, 488k downloads) is unmaintained since
+  2022, has **no** KF8/AZW3 support at all, and returns one flat HTML blob
+  with no spine or TOC. Several very new crates advertise full
+  multi-format engines (`ebook-rs`, `ebook`) but have 2 stars and
+  implausible scope for their age; avoid. `docx-rs` (MIT, 548 stars,
+  actively maintained) is the clear choice whenever DOCX work happens.
+
+  Still open: **DRM is deliberately out of scope** — Amazon-purchased
+  books are encrypted and `KindleInput` detects that and reports it
+  plainly rather than attempting decryption. **FB2** remains unstarted;
+  the `fb2` crate is stale and minimal, and since FB2 is plain XML and
+  `roxmltree` is already a dependency, writing the plugin directly is
+  likely better than taking the dep. **DOCX-in** unstarted.
+
+  **App-layer integration is not done.** The engine and CLI fully support
+  Kindle input, but Bookdrop itself still parses with the Swift-native
+  `EpubParser` and its file picker/drag-drop only accept `.epub`. The
+  design decision to make first: the FFI's `BookInfo` carries no
+  `content_dir`, so the Swift TXT/HTML/DOCX converters (which read chapter
+  files off disk) cannot consume a Rust parse as-is. Either add
+  `content_dir` to `BookInfo` and teach Swift to build a `Book` from that
+  JSON, or normalize at the app boundary — run boko on load, hand the
+  resulting `.epub` to the existing `EpubParser`, and leave everything
+  downstream untouched. The second is far smaller and unlocks all four
+  output formats immediately.
 - **Universal (arm64 + x86_64) Bookdrop binary.** Both Chromium
   architectures are already bundled (this session), but the Swift
   executable itself is still host-arch-only (`swift build` with no
