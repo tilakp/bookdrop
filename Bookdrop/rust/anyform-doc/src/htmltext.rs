@@ -15,9 +15,6 @@ use std::sync::OnceLock;
 
 use regex::Regex;
 
-// `kind`/`bold`/`italic` are read by `docx.rs` (Phase 4), not yet by
-// `txt.rs`, which only consumes flattened run text via `extract_text`.
-#[allow(dead_code)]
 pub(crate) enum BlockKind {
     Heading(u8),
     Paragraph,
@@ -26,14 +23,12 @@ pub(crate) enum BlockKind {
     Preformatted,
 }
 
-#[allow(dead_code)]
 pub(crate) struct Run {
     pub text: String,
     pub bold: bool,
     pub italic: bool,
 }
 
-#[allow(dead_code)]
 pub(crate) struct Block {
     pub kind: BlockKind,
     pub runs: Vec<Run>,

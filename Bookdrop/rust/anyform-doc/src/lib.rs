@@ -1,3 +1,4 @@
+mod docx;
 mod epub;
 mod epub_output;
 mod html;
@@ -7,6 +8,7 @@ mod kindle;
 mod pdf;
 mod txt;
 
+pub use docx::DocxOutput;
 pub use epub::EpubInput;
 pub use epub_output::EpubOutput;
 pub use html::HtmlOutput;
@@ -34,5 +36,6 @@ pub fn document_registry() -> Registry<DocumentIR> {
     r.add_output(Arc::new(EpubOutput));
     r.add_output(Arc::new(TxtOutput));
     r.add_output(Arc::new(HtmlOutput));
+    r.add_output(Arc::new(DocxOutput));
     r
 }
