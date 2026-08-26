@@ -58,6 +58,31 @@ fn extracts_readable_chapter_files() {
     assert!(contents.contains("Chapter One"));
 }
 
+/// EPUB TOC documents commonly carry a DTD: EPUB2 `toc.ncx` files
+/// conventionally open with the NISO ncx DOCTYPE, and EPUB3 `nav.xhtml`
+/// files with `<!DOCTYPE html>`. roxmltree rejects any document with a
+/// DTD unless `allow_dtd` is set, and both TOC parse sites swallow errors
+/// with `.ok()?`, so a DOCTYPE used to make the entire table of contents
+/// silently disappear - no PDF bookmarks, no outline, nothing logged.
+/// Every Gutenberg fixture happens to omit the DOCTYPE, which is exactly
+/// why the rest of the suite never caught this; these two fixtures exist
+/// only to pin the behavior for both TOC formats.
+#[test]
+fn parses_toc_when_nav_document_has_a_doctype() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/doctype-nav.epub");
+    let ir = EpubInput.convert(&path, &Options::new(), &StdLog).expect("doctype-nav.epub should parse");
+    assert_eq!(ir.toc.len(), 1, "EPUB3 nav TOC should survive a <!DOCTYPE html>");
+    assert_eq!(ir.toc[0].title, "Chapter One");
+}
+
+#[test]
+fn parses_toc_when_ncx_document_has_a_doctype() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/doctype-ncx.epub");
+    let ir = EpubInput.convert(&path, &Options::new(), &StdLog).expect("doctype-ncx.epub should parse");
+    assert_eq!(ir.toc.len(), 1, "EPUB2 NCX TOC should survive the standard NISO DOCTYPE");
+    assert_eq!(ir.toc[0].title, "Chapter One");
+}
+
 #[test]
 fn deobfuscates_both_font_obfuscation_schemes() {
     // drm-fonts.epub's two font files were obfuscated by an independent

@@ -148,6 +148,27 @@ fn extract_epub(input: &Path) -> Result<PathBuf, ConvError> {
     Ok(work_dir)
 }
 
+/// Parses XML the way real EPUBs actually ship it, i.e. with a DTD
+/// allowed. `roxmltree::Document::parse` rejects *any* document
+/// containing a DTD ("XML with DTD detected") because `allow_dtd`
+/// defaults to false, and EPUB TOC documents very commonly carry one:
+/// EPUB2 `toc.ncx` files conventionally open with the NISO ncx DOCTYPE,
+/// and EPUB3 `nav.xhtml` files with `<!DOCTYPE html>`. Every TOC parse
+/// site swallows errors with `.ok()?`, so before this helper existed a
+/// DOCTYPE meant the whole table of contents silently vanished (no PDF
+/// bookmarks, no outline) with nothing logged. None of the Gutenberg
+/// test fixtures happen to emit a DOCTYPE, which is exactly why the
+/// suite never caught it.
+///
+/// Enabling `allow_dtd` is safe here: roxmltree never resolves external
+/// entities, and its billion-laughs protection is independent of this
+/// flag (the crate documents the default as "just an extra security
+/// measure").
+fn parse_xml(xml: &str) -> Result<roxmltree::Document<'_>, roxmltree::Error> {
+    let options = roxmltree::ParsingOptions { allow_dtd: true, ..Default::default() };
+    roxmltree::Document::parse_with_options(xml, options)
+}
+
 const ADOBE_OBFUSCATION: &str = "http://ns.adobe.com/pdf/enc#RC";
 const IDPF_OBFUSCATION: &str = "http://www.idpf.org/2008/embedding";
 
@@ -166,7 +187,7 @@ const IDPF_OBFUSCATION: &str = "http://www.idpf.org/2008/embedding";
 fn deobfuscate_fonts(work_dir: &Path, opf: &OpfDocument) {
     let encryption_path = work_dir.join("META-INF/encryption.xml");
     let Ok(xml) = std::fs::read_to_string(&encryption_path) else { return };
-    let Ok(doc) = roxmltree::Document::parse(&xml) else { return };
+    let Ok(doc) = parse_xml(&xml) else { return };
 
     let (idpf_key, adobe_key) = font_deobfuscation_keys(opf);
 
@@ -253,8 +274,7 @@ fn xor_deobfuscate(data: &mut [u8], key: &[u8], crypt_len: usize) {
 fn parse_container(container_path: &Path) -> Result<String, ConvError> {
     let xml = std::fs::read_to_string(container_path)
         .map_err(|_| ConvError::MissingFile("META-INF/container.xml".into()))?;
-    let doc = roxmltree::Document::parse(&xml)
-        .map_err(|e| ConvError::Malformed(format!("container.xml: {e}")))?;
+    let doc = parse_xml(&xml).map_err(|e| ConvError::Malformed(format!("container.xml: {e}")))?;
     doc.descendants()
         .find(|n| n.is_element() && n.tag_name().name() == "rootfile")
         .and_then(|n| n.attribute("full-path"))
@@ -266,7 +286,7 @@ fn parse_opf(opf_path: &Path) -> Result<OpfDocument, ConvError> {
     let xml = std::fs::read_to_string(opf_path)
         .map_err(|_| ConvError::MissingFile(opf_path.display().to_string()))?;
     let doc =
-        roxmltree::Document::parse(&xml).map_err(|e| ConvError::Malformed(format!("OPF: {e}")))?;
+        parse_xml(&xml).map_err(|e| ConvError::Malformed(format!("OPF: {e}")))?;
 
     let mut result = OpfDocument {
         title: None,
@@ -392,7 +412,7 @@ fn parse_toc(opf: &OpfDocument, content_dir: &Path) -> Vec<TocNode> {
 /// EPUB3 `<nav epub:type="toc">` — the `<ol><li><a>` tree it contains.
 fn parse_nav_toc(path: &Path) -> Option<Vec<TocNode>> {
     let xml = std::fs::read_to_string(path).ok()?;
-    let doc = roxmltree::Document::parse(&xml).ok()?;
+    let doc = parse_xml(&xml).ok()?;
     let nav = doc.descendants().find(|n| {
         n.is_element()
             && n.tag_name().name() == "nav"
@@ -428,7 +448,7 @@ fn parse_ol(ol: roxmltree::Node) -> Vec<TocNode> {
 /// EPUB2 `toc.ncx` — the `<navMap>` document.
 fn parse_ncx_toc(path: &Path) -> Option<Vec<TocNode>> {
     let xml = std::fs::read_to_string(path).ok()?;
-    let doc = roxmltree::Document::parse(&xml).ok()?;
+    let doc = parse_xml(&xml).ok()?;
     let nav_map = doc
         .descendants()
         .find(|n| n.is_element() && n.tag_name().name() == "navMap")?;
