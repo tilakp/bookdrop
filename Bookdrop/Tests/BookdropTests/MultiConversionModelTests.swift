@@ -70,4 +70,48 @@ final class MultiConversionModelTests: XCTestCase {
         }
         XCTAssertTrue(history.entries.allSatisfy { $0.conversionLabel == "EPUB → HTML" })
     }
+
+    func testConvertsToTxt() async throws {
+        let outputDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("MultiConversionModelTests-\(UUID().uuidString)")
+        let historyDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("MultiConversionModelTests-history-\(UUID().uuidString)")
+        let history = HistoryStore(directory: historyDir)
+
+        let model = MultiConversionModel(urls: [fixtureURL()], outputDirectory: outputDir)
+        await model.run(options: PDFOptions(), format: .txt, historyStore: history)
+
+        XCTAssertEqual(model.completedCount, 1)
+        guard case .done(let url) = model.jobs[0].status else {
+            XCTFail("expected job to be done, got \(model.jobs[0].status)")
+            return
+        }
+        XCTAssertEqual(url.pathExtension, "txt")
+        let text = try String(contentsOf: url, encoding: .utf8)
+        XCTAssertTrue(text.contains("Minimal Fixture Book"))
+        XCTAssertTrue(text.contains("Chapter One"))
+    }
+
+    func testConvertsToDocx() async throws {
+        let outputDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("MultiConversionModelTests-\(UUID().uuidString)")
+        let historyDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("MultiConversionModelTests-history-\(UUID().uuidString)")
+        let history = HistoryStore(directory: historyDir)
+
+        let model = MultiConversionModel(urls: [fixtureURL()], outputDirectory: outputDir)
+        await model.run(options: PDFOptions(), format: .docx, historyStore: history)
+
+        XCTAssertEqual(model.completedCount, 1)
+        guard case .done(let url) = model.jobs[0].status else {
+            XCTFail("expected job to be done, got \(model.jobs[0].status)")
+            return
+        }
+        XCTAssertEqual(url.pathExtension, "docx")
+        let data = try Data(contentsOf: url)
+        XCTAssertGreaterThan(data.count, 0)
+        // "PK" zip-magic-bytes — a .docx is a zip container; a genuinely
+        // empty or corrupted output wouldn't even have this much.
+        XCTAssertEqual(data.prefix(2), Data([0x50, 0x4B]))
+    }
 }

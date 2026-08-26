@@ -160,33 +160,12 @@ final class AppCoordinator: ObservableObject {
     }
 
     private func convert(book: Book, outputURL: URL, progress: ConversionProgress) async throws -> URL {
-        switch outputFormat {
-        case .pdf:
-            // Routed through the Rust engine (plan Phase 4) — .txt/.html/.docx
-            // stay on the Swift-native converters until Phase 6 ports them too.
-            return try await RustConversionEngine.convert(
-                book: book, options: pdfOptions, outputURL: outputURL, progress: progress)
-        case .txt:
-            progress.stageText = "Converting…"
-            progress.fraction = 0.5
-            let url = try TxtConverter.convert(book: book, outputURL: outputURL)
-            progress.fraction = 1.0
-            return url
-        case .html:
-            progress.stageText = "Converting…"
-            progress.fraction = 0.5
-            let url = try HtmlConverter.convert(
-                book: book, includeCover: pdfOptions.includeCover,
-                generateTOC: pdfOptions.generateTableOfContents, outputURL: outputURL)
-            progress.fraction = 1.0
-            return url
-        case .docx:
-            progress.stageText = "Converting…"
-            progress.fraction = 0.5
-            let url = try DocxConverter.convert(
-                book: book, includeCover: pdfOptions.includeCover, outputURL: outputURL)
-            progress.fraction = 1.0
-            return url
-        }
+        // Every output format now goes through the Rust engine (Phase 6 —
+        // see ANYFORM-FULL-SPEC.md). Dispatch is by the output path's
+        // extension, on the Rust side (Registry::convert in
+        // anyform-core), so this Swift call is already fully generic —
+        // see RustConversionEngine.swift's doc comment.
+        try await RustConversionEngine.convert(
+            book: book, options: pdfOptions, outputURL: outputURL, progress: progress)
     }
 }

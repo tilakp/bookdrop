@@ -70,8 +70,7 @@ final class MultiConversionModel: ObservableObject {
                     }
                 }
 
-                let resultURL = try await convert(
-                    book: book, options: options, format: format, outputURL: outputURL, progress: progress)
+                let resultURL = try await convert(book: book, options: options, outputURL: outputURL, progress: progress)
                 watcher.cancel()
 
                 jobs[index].status = .done(resultURL)
@@ -87,22 +86,12 @@ final class MultiConversionModel: ObservableObject {
     }
 
     private func convert(
-        book: Book, options: PDFOptions, format: OutputFormat, outputURL: URL, progress: ConversionProgress
+        book: Book, options: PDFOptions, outputURL: URL, progress: ConversionProgress
     ) async throws -> URL {
-        switch format {
-        case .pdf:
-            // Routed through the Rust engine (plan Phase 4) — .txt/.html/.docx
-            // stay on the Swift-native converters until Phase 6 ports them too.
-            return try await RustConversionEngine.convert(
-                book: book, options: options, outputURL: outputURL, progress: progress)
-        case .txt:
-            return try TxtConverter.convert(book: book, outputURL: outputURL)
-        case .html:
-            return try HtmlConverter.convert(
-                book: book, includeCover: options.includeCover,
-                generateTOC: options.generateTableOfContents, outputURL: outputURL)
-        case .docx:
-            return try DocxConverter.convert(book: book, includeCover: options.includeCover, outputURL: outputURL)
-        }
+        // Every output format now goes through the Rust engine (Phase 6 —
+        // see ANYFORM-FULL-SPEC.md). Dispatch is by the output path's
+        // extension, on the Rust side, so this Swift call is already
+        // fully generic — see RustConversionEngine.swift's doc comment.
+        try await RustConversionEngine.convert(book: book, options: options, outputURL: outputURL, progress: progress)
     }
 }
