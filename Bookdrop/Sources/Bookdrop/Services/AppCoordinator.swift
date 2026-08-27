@@ -93,6 +93,21 @@ final class AppCoordinator: ObservableObject {
         case .replace:
             let url = outputDirectory.appendingPathComponent(
                 sanitizedFilename(book.title) + "." + outputFormat.fileExtension)
+            // No input format shared an extension with any output format
+            // until PdfInput landed — `.pdf -> .pdf` ("clean up this PDF")
+            // is now a real, legitimate conversion, and if the output
+            // directory is the source's own folder with a title-derived
+            // name matching the original filename, `url` can resolve to
+            // the exact same file as `book.sourceURL`. Replacing it would
+            // truncate the user's original file. Silently fall back to
+            // Keep Both rather than destroy it — the conversion itself is
+            // still exactly what was requested, just not an overwrite.
+            if isSameFile(url, book.sourceURL) {
+                let keepBothURL = nextAvailableURL(
+                    directory: outputDirectory, baseName: sanitizedFilename(book.title),
+                    extension: outputFormat.fileExtension)
+                return startConversion(book: book, outputURL: keepBothURL)
+            }
             return startConversion(book: book, outputURL: url)
         case .keepBoth:
             let url = nextAvailableURL(
@@ -100,6 +115,13 @@ final class AppCoordinator: ObservableObject {
                 extension: outputFormat.fileExtension)
             return startConversion(book: book, outputURL: url)
         }
+    }
+
+    /// Compares filesystem identity (resolved/standardized path), not just
+    /// string equality — robust to symlinks and the kind of path noise
+    /// `.standardizedFileURL` normalizes away.
+    private func isSameFile(_ a: URL, _ b: URL) -> Bool {
+        a.resolvingSymlinksInPath().standardizedFileURL.path == b.resolvingSymlinksInPath().standardizedFileURL.path
     }
 
     func cancelConversion(progress: ConversionProgress) {
@@ -146,9 +168,15 @@ final class AppCoordinator: ObservableObject {
         } catch RustConversionEngineError.cancelled {
             screen = .loaded(book)
         } catch let error as LocalizedError {
+            // "Preserve EPUB Styling" is only sensible advice when the
+            // *source* actually has EPUB styling to preserve — a PDF
+            // source failing to convert to PDF (a real, if rare,
+            // possibility now that PdfInput exists) would get nonsensical
+            // advice otherwise.
+            let sourceIsStyledEpubLike = book.sourceURL.pathExtension.lowercased() != "pdf"
             screen = .error(
                 message: error.errorDescription ?? "Couldn't convert this book.",
-                hint: outputFormat == .pdf
+                hint: outputFormat == .pdf && sourceIsStyledEpubLike
                     ? "Try enabling \u{201C}Preserve EPUB Styling\u{201D} or choose another output format."
                     : "Try another output format.",
                 technicalDetails: String(describing: error))

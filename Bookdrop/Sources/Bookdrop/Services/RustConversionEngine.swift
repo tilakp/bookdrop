@@ -147,6 +147,48 @@ private func bundledChromiumPath() -> String? {
     return FileManager.default.fileExists(atPath: path) ? path : nil
 }
 
+/// Same pattern as `bundledChromiumPath()`, for the `libpdfium.dylib`
+/// `Scripts/build-app.sh` copies into `Contents/Resources/Pdfium/<arch>/`
+/// (see `rust/scripts/fetch-pdfium.sh`). `PdfInput`'s own dev-tree fallback
+/// (relative to `anyform-doc`'s `CARGO_MANIFEST_DIR`) covers `swift test`/
+/// `swift run` when this returns `nil`.
+private func bundledPdfiumPath() -> String? {
+    guard let resourceURL = Bundle.main.resourceURL else { return nil }
+    #if arch(arm64)
+        let arch = "mac-arm64"
+    #elseif arch(x86_64)
+        let arch = "mac-x64"
+    #else
+        return nil
+    #endif
+    let path = resourceURL.appendingPathComponent("Pdfium/\(arch)/libpdfium.dylib").path
+    return FileManager.default.fileExists(atPath: path) ? path : nil
+}
+
+/// Same pattern again, for the bundled `boko` binary. This was a real,
+/// pre-existing gap: `KindleInput` on the Rust side (`kindle.rs`) has
+/// looked for a `boko_path` option since it was written, but nothing here
+/// ever set one — every shipped-app AZW3/KFX/MOBI conversion silently fell
+/// through to Rust's dev-tree fallback (a path baked in from
+/// `CARGO_MANIFEST_DIR` at compile time), which only happens to exist on a
+/// developer's own machine. `KindleNormalizer` has its own private copy of
+/// this same lookup for the Swift-side preview parse — kept separate
+/// rather than shared, matching this codebase's existing pattern of
+/// independent per-call-site path resolution (Rust has three near-identical
+/// `resolve_*_path` functions for exactly this reason).
+private func bundledBokoPath() -> String? {
+    guard let resourceURL = Bundle.main.resourceURL else { return nil }
+    #if arch(arm64)
+        let arch = "mac-arm64"
+    #elseif arch(x86_64)
+        let arch = "mac-x64"
+    #else
+        return nil
+    #endif
+    let path = resourceURL.appendingPathComponent("Boko/\(arch)/boko").path
+    return FileManager.default.fileExists(atPath: path) ? path : nil
+}
+
 /// Builds the JSON `anyform_convert_start` reads its render options from —
 /// mirrors every field of `PDFOptions` (`Sources/Bookdrop/Models/PDFOptions.swift`)
 /// so nothing in the Advanced Options UI is silently ignored by the Rust
@@ -185,6 +227,12 @@ private func conversionOptionsJSON(pdfOptions: PDFOptions) -> String {
     ]
     if let chromiumPath = bundledChromiumPath() {
         payload["chromium_path"] = chromiumPath
+    }
+    if let pdfiumPath = bundledPdfiumPath() {
+        payload["pdfium_path"] = pdfiumPath
+    }
+    if let bokoPath = bundledBokoPath() {
+        payload["boko_path"] = bokoPath
     }
     guard let data = try? JSONSerialization.data(withJSONObject: payload),
         let json = String(data: data, encoding: .utf8)

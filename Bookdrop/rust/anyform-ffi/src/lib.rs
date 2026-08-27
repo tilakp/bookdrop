@@ -56,7 +56,7 @@ impl Log for FfiLog {
     }
 }
 
-// ---- Book-info JSON (for `anyform_parse_epub`) ----
+// ---- Book-info JSON (for `anyform_parse_book`) ----
 
 #[derive(Serialize)]
 struct SpineItemWire {
@@ -124,14 +124,18 @@ enum ErrorResult {
     Error { message: String },
 }
 
-/// Parses an EPUB and returns Book-info JSON (`{"status":"ok","book":{...}}`
-/// or `{"status":"error","message":"..."}`) for the UI's file-loaded panel.
+/// Parses any registered input format — EPUB, Kindle-family, or PDF, not
+/// just EPUB despite the name this replaced (`anyform_parse_epub`; it was
+/// never actually EPUB-specific, since `registry.parse` dispatches by the
+/// input path's extension the same way `registry.convert` does) — and
+/// returns Book-info JSON (`{"status":"ok","book":{...}}` or
+/// `{"status":"error","message":"..."}`) for the UI's file-loaded panel.
 /// Caller must free the returned pointer with `anyform_free_string`.
 ///
 /// # Safety
 /// `path` must be a valid, NUL-terminated UTF-8 C string.
 #[no_mangle]
-pub unsafe extern "C" fn anyform_parse_epub(path: *const c_char) -> *mut c_char {
+pub unsafe extern "C" fn anyform_parse_book(path: *const c_char) -> *mut c_char {
     let result: Result<BookInfo, String> = (|| {
         let path = c_str_to_pathbuf(path)?;
         let registry = anyform_doc::document_registry();

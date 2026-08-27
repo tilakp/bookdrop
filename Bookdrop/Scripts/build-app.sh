@@ -12,6 +12,7 @@ APP_DIR="$ROOT_DIR/.build/$CONFIG/Bookdrop.app"
 echo "Building anyform engine (Rust)..."
 "$ROOT_DIR/rust/scripts/fetch-chromium.sh"
 "$ROOT_DIR/rust/scripts/fetch-boko.sh"
+"$ROOT_DIR/rust/scripts/fetch-pdfium.sh"
 "$ROOT_DIR/rust/scripts/build-ffi.sh"
 
 # Only `release` builds universal (arm64 + x86_64) — it's the one config that
@@ -106,6 +107,23 @@ for BOKO_PLATFORM in mac-arm64 mac-x64; do
 done
 cp "$ROOT_DIR/rust/vendor/boko/LICENSE-NOTICE.txt" "$APP_DIR/Contents/Resources/Boko/LICENSE-NOTICE.txt"
 cp "$ROOT_DIR"/rust/vendor/boko/boko-*-source.tar.gz "$APP_DIR/Contents/Resources/Boko/"
+
+# Bundle the vendored `libpdfium.dylib` for both architectures, at
+# Contents/Resources/Pdfium/<arch>/ — used by PdfInput to read PDF files.
+# Unlike boko, PDFium's license (BSD-3-Clause + permissively-licensed
+# third-party components — see rust/scripts/fetch-pdfium.sh) is directly
+# linkable/loadable with no source-offer obligation, so only the license
+# attribution text travels with it, no source tarball.
+for PDFIUM_PLATFORM in mac-arm64 mac-x64; do
+    PDFIUM_SRC="$ROOT_DIR/rust/vendor/pdfium/$PDFIUM_PLATFORM/libpdfium.dylib"
+    if [ ! -f "$PDFIUM_SRC" ]; then
+        echo "build-app.sh: missing $PDFIUM_SRC — run rust/scripts/fetch-pdfium.sh" >&2
+        exit 1
+    fi
+    mkdir -p "$APP_DIR/Contents/Resources/Pdfium/$PDFIUM_PLATFORM"
+    cp "$PDFIUM_SRC" "$APP_DIR/Contents/Resources/Pdfium/$PDFIUM_PLATFORM/libpdfium.dylib"
+done
+cp "$ROOT_DIR/rust/vendor/pdfium/LICENSE-NOTICE.txt" "$APP_DIR/Contents/Resources/Pdfium/LICENSE-NOTICE.txt"
 
 # Ad-hoc sign so Gatekeeper doesn't block the bundled Chromium binary or a
 # statically-linked Rust std that isn't signed by a real Developer ID —

@@ -15,5 +15,6 @@ base64 = "0.23.1"
 regex = "1.13.1"
 sha1 = "0.10.7"
 docx-rs = { version = "0.4", default-features = false }
+pdfium-render = { version = "0.9.3", default-features = false, features = ["pdfium_latest", "thread_safe"] }
 
 [dev-dependencies]

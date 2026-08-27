@@ -1,3 +1,4 @@
+import CAnyform
 import Foundation
 
 enum KindleNormalizerError: LocalizedError {
@@ -15,6 +16,39 @@ enum KindleNormalizerError: LocalizedError {
             return detail.isEmpty ? "This Kindle file couldn't be read." : "This Kindle file couldn't be read: \(detail)"
         }
     }
+}
+
+/// Mirrors `BookInfo`/`SpineItemWire`/`TocNodeWire` in `anyform-ffi/src/lib.rs`
+/// exactly — the JSON `anyform_parse_book` returns.
+private struct RustBookInfo: Decodable {
+    struct SpineItemWire: Decodable { let id: String; let href: String }
+    struct TocNodeWire: Decodable {
+        let title: String
+        let href: String?
+        let children: [TocNodeWire]
+    }
+    let title: String
+    let author: String?
+    let coverBase64: String?
+    let fileSizeBytes: Int64
+    let spine: [SpineItemWire]
+    let toc: [TocNodeWire]
+
+    enum CodingKeys: String, CodingKey {
+        case title, author, spine, toc
+        case coverBase64 = "cover_base64"
+        case fileSizeBytes = "file_size_bytes"
+    }
+}
+
+private struct RustParseResult: Decodable {
+    let status: String
+    let book: RustBookInfo?
+    let message: String?
+}
+
+private func toTocNode(_ wire: RustBookInfo.TocNodeWire) -> TocNode {
+    TocNode(title: wire.title, href: wire.href, children: wire.children.map(toTocNode))
 }
 
 /// Normalizes Kindle-family ebook files (AZW3, AZW, KFX, MOBI) to EPUB
@@ -42,6 +76,9 @@ enum KindleNormalizer {
     /// PDF output path (which re-reads `Book.sourceURL` through the Rust
     /// engine's own registry) both keep working unchanged.
     static func parse(fileAt url: URL) throws -> Book {
+        if url.pathExtension.lowercased() == "pdf" {
+            return try parseViaRustEngine(fileAt: url)
+        }
         guard kindleExtensions.contains(url.pathExtension.lowercased()) else {
             return try EpubParser.parse(fileAt: url)
         }
@@ -55,6 +92,55 @@ enum KindleNormalizer {
             book.fileSizeBytes = size
         }
         return book
+    }
+
+    /// PDF has no Swift-native parser (unlike EPUB/`EpubParser` and
+    /// Kindle-family/`normalizeToEpub` above) — `PdfInput` on the Rust side
+    /// is the only place that knows how to turn a PDF into chapters, so the
+    /// preview panel goes through `anyform_parse_book` (previously
+    /// `anyform_parse_epub` — renamed once it was clear it was never
+    /// EPUB-specific: `registry.parse` dispatches by extension the same way
+    /// `registry.convert` does) rather than parsing anything itself. This
+    /// means a PDF gets parsed twice per conversion — once here for the
+    /// preview, once again inside `RustConversionEngine.convert` — which is
+    /// the same double-parse `KindleNormalizer.parse` above already accepts
+    /// for Kindle files (normalize-then-EpubParser here, `KindleInput`
+    /// again on the Rust side). `contentDirectory`/`manifest` on the
+    /// returned `Book` are unused placeholders — nothing in the UI reads
+    /// them (see `RustConversionEngine`'s own doc comment) — the real
+    /// content only exists inside the Rust engine's own temp work
+    /// directory for the lifetime of a single `PdfInput::convert` call.
+    private static func parseViaRustEngine(fileAt url: URL) throws -> Book {
+        guard let cString = url.path.withCString({ anyform_parse_book($0) }) else {
+            throw KindleNormalizerError.conversionFailed("the PDF reader returned no result")
+        }
+        defer { anyform_free_string(cString) }
+        let json = String(cString: cString)
+
+        guard let data = json.data(using: .utf8),
+            let result = try? JSONDecoder().decode(RustParseResult.self, from: data)
+        else {
+            throw KindleNormalizerError.conversionFailed("the PDF reader's response couldn't be understood")
+        }
+        guard result.status == "ok", let info = result.book else {
+            throw KindleNormalizerError.conversionFailed(result.message ?? "")
+        }
+
+        let coverImage = info.coverBase64.flatMap { Data(base64Encoded: $0) }
+        let spine = info.spine.map { SpineItem(id: $0.id, href: $0.href, mediaType: "application/xhtml+xml") }
+        let toc = info.toc.map(toTocNode)
+
+        return Book(
+            title: info.title,
+            author: info.author,
+            coverImage: coverImage,
+            fileSizeBytes: info.fileSizeBytes,
+            spine: spine,
+            toc: toc,
+            manifest: [:],
+            sourceURL: url,
+            contentDirectory: FileManager.default.temporaryDirectory
+        )
     }
 
     private static func normalizeToEpub(_ url: URL) throws -> URL {

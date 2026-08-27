@@ -64,7 +64,7 @@ Options is silently ignored). What exists, in `Bookdrop/rust/`:
   app's own file-picker automation incident (see
   [[feedback-macos-testing-and-automation]]).
 
-All 43 Swift tests + 70 Rust tests pass, including tests that construct
+All 44 Swift tests + 99 Rust tests pass, including tests that construct
 non-default `PDFOptions` (custom page size, disabled cover/TOC,
 headers/footers/page numbers, typography) and assert the *rendered PDF*
 reflects them — both at the Rust-engine level and end-to-end through
@@ -96,9 +96,9 @@ limitations of EPUB-out (non-linear spine items; source `dc:identifier`).
   `rust/scripts/build-ffi.sh` once first, or use `Scripts/build-app.sh`
   which does it automatically).
 - Build the Rust engine: `cd Bookdrop/rust && cargo test` (needs
-  `scripts/fetch-chromium.sh` run once first for the PDF-output tests) —
-  70 tests.
-- Test: `swift test` — 43 tests (~26s, mostly real Rust/Chromium PDF
+  `scripts/fetch-chromium.sh`/`scripts/fetch-pdfium.sh` run once first for
+  the PDF-output/PDF-input tests) — 99 tests.
+- Test: `swift test` — 44 tests (~26s, mostly real Rust/Chromium PDF
   renders now, not mocked), all use scratch directories / an in-memory
   `KeyValueStore` so they never touch real user data.
 - Run as a real `.app` bundle — needed for the Dock icon, system
@@ -118,11 +118,18 @@ limitations of EPUB-out (non-linear spine items; source `dc:identifier`).
   five output plugins backing that (PDF via bundled headless Chromium;
   EPUB/TXT/HTML/DOCX pure Rust, TXT and DOCX sharing `htmltext.rs`'s
   chapter-XHTML extractor).
+- `Bookdrop/rust/anyform-doc/src/{epub,kindle,pdf_input}.rs` — the three
+  input plugins (EPUB parsed directly; Kindle-family normalized to EPUB via
+  the bundled `boko` binary then delegated to `EpubInput`; PDF read via
+  bundled `pdfium` and reconstructed into chapters by `pdf_layout.rs`'s
+  layout heuristics — a deliberately-scoped MVP, see §6's "Version 2.2").
 - `Sources/Bookdrop/Services/EpubParser.swift` + `EpubXML.swift` — EPUB →
   `Book` (OPF/NCX/nav parsing, cover extraction). Kept deliberately even
   though byte-level conversion moved entirely to Rust: this is what parses
-  the `Book` the UI displays (title/author/cover/chapter count) and what
-  `KindleNormalizer.swift` hands off to after normalizing AZW3/KFX/MOBI.
+  the `Book` the UI displays (title/author/cover/chapter count) for EPUB
+  and (via `KindleNormalizer.swift`) normalized Kindle-family files; PDF's
+  preview instead calls the Rust engine directly through the FFI
+  (`anyform_parse_book`) since there's no Swift-native PDF parser.
 - `PDFOptions` (`Models/PDFOptions.swift`) carries options reused by every
   format, not just PDF (cover/TOC/style-preservation) — the name is known
   naming debt, not urgent enough to have risked the rename yet.
@@ -1271,6 +1278,96 @@ newly exposed: **AZW3/KFX/MOBI → EPUB**, since `KindleInput` already
 normalizes every Kindle format to EPUB before handing off to the shared
 registry — this was a free capability unlock, not new engine work.
 
+### Version 2.2: shipped (PDF as an input format, deliberately-scoped MVP)
+
+*(2026-08-26)* `PdfInput` (`anyform-doc/src/{pdfium,pdf_layout,pdf_input}.rs`)
+reads text-layer PDFs and reconstructs reflowable chapter structure — this
+was previously flagged below as "not a routine format-plugin addition,"
+and that warning held: it took real document-layout-analysis work, not a
+parser. Because `Registry::convert` dispatches input and output plugins
+independently by extension, this one plugin makes `.pdf → .epub`/`.txt`/
+`.html`/`.docx`/`.pdf` all reachable for free, the same capability-unlock
+shape as Kindle-format input.
+
+**Engine choice:** `pdfium-render` against a bundled per-arch
+`libpdfium.dylib` (`rust/scripts/fetch-pdfium.sh`, BSD-3-Clause + permissive
+third-party components — direct-linkable/loadable, unlike `boko`'s
+GPL-3.0-or-later subprocess isolation) — see §0/§1 of the PDF-input plan
+for the full reasoning (chosen over `mupdf-rs`/AGPL and pure-Rust
+extraction crates). `pdfium-render`'s own `thread_safe` feature turned out
+insufficient on its own — a real segfault under genuinely concurrent
+multi-thread use, caught by a dedicated concurrency test — so `pdfium.rs`
+also holds its own process-wide lock around the whole extraction, not just
+individual FFI calls.
+
+**Deliberately scoped, not a general solution:** text-layer PDFs only
+(scanned/image-only PDFs are detected via near-zero extractable text +
+image-area coverage and refused, not silently emitted as empty books);
+single-column only (multi-column layouts are detected via a glyph-position
+coverage histogram and refused rather than reflowed into scrambled
+reading order); encrypted PDFs refused with a clear message; no OCR, no
+table extraction, no image extraction, no cover image (page-1-as-cover was
+planned as an optional follow-up phase, not shipped — `metadata.cover`
+stays `None` for every PDF). An honest refusal on what this can't handle
+is the feature, not a shortcoming.
+
+**Layout reconstruction**, in order: glyphs → lines (vertical clustering,
+tuned to expand its matching window per-line rather than compare against a
+fixed anchor, after a real bug where a descender character like 'p' split
+off into its own bogus line) → running-head/page-number stripping (cross-page
+repetition, skipped on <4-page documents) → column-count detection (built
+from raw glyph positions, not merged same-row lines — merged lines
+necessarily span a two-column row's full width including the gutter, which
+silently defeated the first version of this detector on a real two-column
+test fixture) → paragraph/heading classification (character-weighted
+font-size histogram for body size, headings at `body_size × 1.3` after a
+real fixture caught a false positive at the original 1.15×, hyphenation
+joining, cross-page paragraph merging) → chapter splitting (prefers the
+PDF's own outline/bookmarks when it has ≥2 usable top-level entries — by
+far the highest-quality path, and free on any LaTeX/Word/InDesign/`PdfOutput`-produced
+PDF — falling back to the heading tiers otherwise, with sanity guards that
+degrade to fixed page-chunking rather than fail outright on clearly-wrong
+heading counts).
+
+**Verified against real fixtures**, not just self-generated ones — see
+`anyform-doc/tests/fixtures/README.md`'s PDF-input section for the full
+list and what each one pins down, including a real public-domain U.S.
+government document (never touched by this engine's own output before).
+That real-world fixture caught two more bugs: a double-space artifact
+(a real space glyph and the word-gap heuristic both firing for the same
+gap) and a disclosed, not-fixed cosmetic limitation (an occasional
+stylized enlarged-first-letter run extracting with a stray space, e.g.
+"of America" → "ofA merica").
+
+**App integration:** `EmptyStateView` accepts `.pdf`; the FFI's
+`anyform_parse_epub` was renamed to `anyform_parse_book` (it was never
+actually EPUB-specific) and is now genuinely called from Swift for the
+first time, giving the PDF preview panel a real title/author/chapter count
+instead of failing outright; `RustConversionEngine.conversionOptionsJSON`
+now passes `pdfium_path` — and, in the same edit, the previously-missing
+`boko_path` (a real pre-existing bug: `KindleInput` has looked for this
+option since it was written, but nothing ever set it, so every
+shipped-app AZW3/KFX/MOBI conversion silently fell back to a
+compile-time dev-tree path that only exists on a developer's own
+machine). A genuinely new risk this format-pair created — no input format
+had ever shared an extension with an output format before `.pdf → .pdf`
+("clean up this PDF") became possible — is a same-path overwrite: choosing
+"Replace" could previously truncate the user's own source file mid-read.
+Fixed with a filesystem-identity check in `AppCoordinator` that silently
+falls back to Keep Both instead (the same latent risk existed for
+`.epub → .epub` since `EpubOutput` shipped in 2.1, fixed by the same
+change).
+
+**Not independently re-verified for this release:** an actual PDF
+conversion driven through the live GUI on the x86_64 slice, or on real
+Intel hardware — same disclosed gap as the universal-binary work above,
+for the same reason (no GUI/file-picker automation, no Intel hardware
+available this session). The bundled `libpdfium.dylib` is confirmed
+correctly placed and architecture-correct inside a real built `.app`, and
+`bundledPdfiumPath()` is a structural copy of the already-production-proven
+`bundledChromiumPath()` pattern, but that's inference from a proven
+pattern, not a live end-to-end GUI observation.
+
 ### What's next: full roadmap
 
 Grouped by how close each item is to being worth picking up, not by
@@ -1460,18 +1557,13 @@ bigger or needs more scoping before starting.
 
 **Long-term / speculative, needs its own dedicated scoping pass:**
 
-- **PDF as an input format.** Came up directly this session (user asked
-  about PDF→EPUB) and is worth flagging clearly: this is not a routine
-  format-plugin addition. Every input plugin so far (EPUB, and the
-  planned MOBI/FB2/DOCX) is fundamentally *flowable text with structure
-  markup* being read into `DocumentIR`. PDF is fixed-layout with no
-  guaranteed semantic structure, positioned glyphs, not flowing text.
-  Reconstructing readable, reflowable EPUB output from that is closer to
-  the document-layout-analysis/OCR problem space than to anything the
-  engine does today (calibre's own PDF input support has historically
-  been one of its weaker, most complained-about conversion paths, for
-  exactly this reason). Worth a dedicated research spike before
-  committing to it, not a "just add the plugin" task.
+- ~~**PDF as an input format.**~~ Done — see §6's "Version 2.2" entry
+  above. The original warning here (not a routine format-plugin addition,
+  closer to document-layout-analysis than parsing) held up in practice;
+  the MVP that shipped is deliberately scoped (text-layer, single-column
+  only) rather than a general solution, with everything outside that scope
+  (OCR, multi-column reflow, tables, cover images) explicitly deferred, not
+  attempted and gotten wrong.
 - **Third-party plugin loading.** Still explicitly out of scope (§2, §6
   engine notes above). Would need `libloading` + a stable ABI. No
   concrete driving need yet.

@@ -208,4 +208,48 @@ final class AppCoordinatorTests: XCTestCase {
             return
         }
     }
+
+    // MARK: - Same-path overwrite guard
+
+    /// No input format shared an extension with any output format until
+    /// `EpubOutput`/`PdfInput` landed - `.epub -> .epub` and `.pdf -> .pdf`
+    /// ("clean up this book") are now both real, and if the output
+    /// directory is the source's own folder with a title-derived filename
+    /// matching the original, the candidate output path can resolve to the
+    /// exact same file as `book.sourceURL`. Choosing "Replace" must never
+    /// destroy that file - this pins `AppCoordinator.isSameFile`'s guard in
+    /// `handleDuplicateResolution`, not just documents the intent.
+    func testDuplicateReplaceNeverOverwritesTheSourceFile() async throws {
+        let coordinator = makeCoordinator()
+        coordinator.outputFormat = .epub
+
+        let workDir = scratchDir("same-path")
+        let sourceCopy = workDir.appendingPathComponent("Minimal Fixture Book.epub")
+        try FileManager.default.copyItem(at: fixtureURL(), to: sourceCopy)
+        let originalBytes = try Data(contentsOf: sourceCopy)
+
+        let book = try EpubParser.parse(fileAt: sourceCopy)
+        coordinator.outputDirectory = workDir
+        XCTAssertEqual(book.sourceURL.path, sourceCopy.path, "test setup: source and candidate output must collide")
+
+        let beginTask = coordinator.beginConvert(book: book)
+        XCTAssertNil(beginTask, "the source file already exists at the candidate path — should prompt, not convert directly")
+        guard case .duplicateConfirm = coordinator.screen else {
+            XCTFail("expected .duplicateConfirm, got \(coordinator.screen)")
+            return
+        }
+
+        let task = coordinator.handleDuplicateResolution(.replace, book: book)
+        await task?.value
+
+        let survivingBytes = try Data(contentsOf: sourceCopy)
+        XCTAssertEqual(survivingBytes, originalBytes, "choosing Replace must never truncate/overwrite the source file")
+
+        guard case .complete(let info) = coordinator.screen else {
+            XCTFail("expected .complete (falling back to Keep Both), got \(coordinator.screen)")
+            return
+        }
+        XCTAssertNotEqual(info.outputURL.path, sourceCopy.path, "output must land at a different path than the source")
+        XCTAssertEqual(info.outputURL.lastPathComponent, "Minimal Fixture Book (1).epub")
+    }
 }

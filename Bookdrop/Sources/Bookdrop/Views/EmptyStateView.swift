@@ -10,10 +10,13 @@ struct EmptyStateView: View {
 
     @State private var isTargeted = false
 
-    /// EPUB plus every Kindle-family extension `KindleNormalizer` accepts
-    /// (see its `kindleExtensions`) — none of these have a built-in system
-    /// UTType, so each is declared from its filename extension directly.
-    private static let acceptedExtensions = ["epub"] + KindleNormalizer.kindleExtensions.sorted()
+    /// EPUB, PDF, and every Kindle-family extension `KindleNormalizer`
+    /// accepts (see its `kindleExtensions`). Unlike the ebook extensions,
+    /// "pdf" *does* resolve to a real built-in system UTType — left in this
+    /// same list (rather than special-cased) since `acceptedTypes` below
+    /// derives from filename extension either way, so the asymmetry is
+    /// invisible here; don't "fix" it by moving pdf out.
+    private static let acceptedExtensions = ["epub", "pdf"] + KindleNormalizer.kindleExtensions.sorted()
     private static let acceptedTypes: [UTType] = acceptedExtensions.compactMap { UTType(filenameExtension: $0) }
 
     var body: some View {
