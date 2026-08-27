@@ -14,14 +14,40 @@ echo "Building anyform engine (Rust)..."
 "$ROOT_DIR/rust/scripts/fetch-boko.sh"
 "$ROOT_DIR/rust/scripts/build-ffi.sh"
 
-echo "Building (${CONFIG})..."
-swift build -c "$CONFIG" --package-path "$ROOT_DIR"
+# Only `release` builds universal (arm64 + x86_64) — it's the one config that
+# ships in a DMG. `debug` stays host-arch-only on purpose: building the whole
+# Swift module twice would tax every local `build-app.sh debug` iteration for
+# a slice nobody runs during development. If this ever needs revisiting,
+# that's a deliberate choice to reconsider, not an oversight to "fix".
+if [ "$CONFIG" = "release" ]; then
+    echo "Building (release, universal arm64+x86_64)..."
+    swift build -c release --arch arm64 --arch x86_64 --package-path "$ROOT_DIR"
+    # SwiftPM's multi-arch build lands the lipo'd product under
+    # .build/apple/Products/<Config>/ (the Xcode-style "Products" layout),
+    # not the normal single-arch .build/<config>/ used below — confirmed by
+    # running the build and inspecting it directly, not assumed.
+    BUILT_EXE="$ROOT_DIR/.build/apple/Products/Release/Bookdrop"
+
+    # A single-arch release binary must never silently ship — the failure
+    # mode (an Intel user's app refusing to launch) is otherwise invisible
+    # until someone actually tries it on Intel hardware.
+    [ -f "$BUILT_EXE" ] || { echo "build-app.sh: universal build produced no binary at $BUILT_EXE" >&2; exit 1; }
+    LIPO_INFO="$(lipo -info "$BUILT_EXE")"
+    case "$LIPO_INFO" in
+        *x86_64*arm64*|*arm64*x86_64*) ;;
+        *) echo "build-app.sh: $BUILT_EXE is not universal: $LIPO_INFO" >&2; exit 1 ;;
+    esac
+else
+    echo "Building (${CONFIG})..."
+    swift build -c "$CONFIG" --package-path "$ROOT_DIR"
+    BUILT_EXE="$ROOT_DIR/.build/$CONFIG/Bookdrop"
+fi
 
 echo "Assembling ${APP_DIR}..."
 rm -rf "$APP_DIR"
 mkdir -p "$APP_DIR/Contents/MacOS" "$APP_DIR/Contents/Resources"
 
-cp "$ROOT_DIR/.build/$CONFIG/Bookdrop" "$APP_DIR/Contents/MacOS/Bookdrop"
+cp "$BUILT_EXE" "$APP_DIR/Contents/MacOS/Bookdrop"
 cp "$ROOT_DIR/Resources/Info.plist" "$APP_DIR/Contents/Info.plist"
 cp "$ROOT_DIR/Resources/AppIcon.icns" "$APP_DIR/Contents/Resources/AppIcon.icns"
 
@@ -29,12 +55,14 @@ cp "$ROOT_DIR/Resources/AppIcon.icns" "$APP_DIR/Contents/Resources/AppIcon.icns"
 # (see rust/scripts/fetch-chromium.sh), at Contents/Resources/Chromium/<arch>/
 # — RustConversionEngine.swift picks the matching one at runtime via
 # `#if arch(...)`, same as Rust's own resolve_chromium_path fallback does
-# via `cfg!(target_arch)`. Note: the Bookdrop *executable* itself is only
-# built for the host architecture below (`swift build` with no `--arch`
-# flags) — bundling both Chromium variants is necessary but not
-# sufficient for cross-architecture distribution; that also needs a
-# universal Bookdrop binary (`swift build --arch arm64 --arch x86_64` +
-# `lipo`), not attempted here.
+# via `cfg!(target_arch)`. For `release`, the Bookdrop executable above is
+# itself a universal (arm64 + x86_64) binary, so `#if arch(...)` is a
+# *compile-time* branch baked into each slice — the kernel/Rosetta picks
+# the slice at launch, and that slice's own compiled-in branch resolves
+# the matching Chromium/Boko directory below. Bundling both variants is
+# what makes that resolution correct once the executable itself is fat;
+# `debug` stays host-arch-only (see above), so on debug only the host's
+# own Chromium/Boko variant is ever actually exercised.
 #
 # Copies the *entire* chrome-headless-shell-<platform>/ directory, not
 # just the executable — it's not a standalone binary, it needs its sibling

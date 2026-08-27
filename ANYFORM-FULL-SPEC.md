@@ -45,10 +45,24 @@ Options is silently ignored). What exists, in `Bookdrop/rust/`:
   `Scripts/build-app.sh` builds the
   Rust engine, bundles **both** Chromium architectures into
   `Contents/Resources/Chromium/<mac-arm64|mac-x64>/` (Swift picks the
-  right one at runtime via `#if arch(...)`), and ad-hoc codesigns. The
-  `Bookdrop` executable itself is still built single-arch (host only) —
-  true cross-architecture distribution would also need a universal
-  `swift build --arch arm64 --arch x86_64` + `lipo`, not done.
+  right one at runtime via `#if arch(...)`), and ad-hoc codesigns. **The
+  `Bookdrop` executable itself is now a universal (arm64 + x86_64) binary
+  for `release` builds** (`swift build --arch arm64 --arch x86_64`, one
+  invocation — SwiftPM does its own `lipo` under the hood and lands the
+  fat product at `.build/apple/Products/Release/Bookdrop`, a different
+  layout than the normal single-arch `.build/<config>/`). `debug` stays
+  host-arch-only on purpose (fast local iteration; nobody runs the debug
+  build on Intel). Verified: `lipo -info` on both the Rust static lib and
+  the final `.app` executable list both architectures; the x86_64 slice
+  launches cleanly under Rosetta 2 on this (Apple Silicon) machine,
+  confirmed via `sample`'s `Code Type: X86-64 (translated)` — not just
+  process survival, the actual running architecture. **Not yet verified:
+  a real book conversion through the x86_64 slice** (which would exercise
+  the bundled x86_64 Chromium/boko subprocess spawn for the first time)
+  or execution on genuine Intel hardware — both require hands-on
+  interaction this session deliberately didn't automate, matching this
+  app's own file-picker automation incident (see
+  [[feedback-macos-testing-and-automation]]).
 
 All 43 Swift tests + 70 Rust tests pass, including tests that construct
 non-default `PDFOptions` (custom page size, disabled cover/TOC,
@@ -1404,13 +1418,45 @@ bigger or needs more scoping before starting.
   launched as a child process the same way `Process.run()` would — the
   exact failure class ("SIGTRAPs as a child of a signed app") that broke
   Chromium bundling earlier this session.
-- **Universal (arm64 + x86_64) Bookdrop binary.** Both Chromium
-  architectures are already bundled (this session), but the Swift
-  executable itself is still host-arch-only (`swift build` with no
-  `--arch` flags). Needs `swift build --arch arm64 --arch x86_64` + `lipo`
-  in `build-app.sh`/`release.sh`, and testing on actual Intel hardware
-  (or at minimum Rosetta) before trusting it, given this session's own
-  lesson about not trusting a build without running it for real.
+- ~~**Universal (arm64 + x86_64) Bookdrop binary.**~~ Done (2026-08-26) for
+  `release` builds. `Scripts/build-app.sh` branches on `$CONFIG`: `release`
+  now runs `swift build -c release --arch arm64 --arch x86_64` (one
+  invocation — SwiftPM lipos the two slices itself), `debug` stays
+  host-arch-only on purpose so the local dev loop isn't taxed compiling
+  twice for a slice nobody runs during development. The release path also
+  hard-fails (`exit 1`) if `lipo -info` on the built executable doesn't
+  list both architectures, so a silently-thin release build can't ship.
+  `Scripts/release.sh` needed zero changes — it only depends on
+  `build-app.sh`'s output path (`.build/$CONFIG/Bookdrop.app`), which is
+  unaffected by how the raw executable inside it was produced. Turned up
+  one real gap along the way: `rust/scripts/build-ffi.sh`'s stale-relink
+  guard (added earlier this session — see the DRM/font-obfuscation entry
+  above for its origin story) only matched the old single-arch output
+  paths; the universal build's product lands at a differently-shaped,
+  differently-cased path
+  (`.build/apple/Products/Release/Bookdrop`, plus per-arch intermediates
+  under `.build/apple/Intermediates.noindex/.../Objects-normal/<arch>/Binary/Bookdrop`),
+  neither of which the old patterns matched — fixed by extending the
+  guard's `find`, verified by confirming `find .build -name Bookdrop -type f`
+  is empty after a fresh universal build. Live-verified: `lipo -info`
+  confirms both the Rust static lib and the final `.app` executable carry
+  `x86_64`+`arm64`; the arm64 slice still launches and passes the full
+  `swift test` suite (43/43) with no regression; the x86_64 slice launches
+  cleanly under Rosetta 2 with `sample` confirming `Code Type: X86-64
+  (translated)` (not just process survival — the genuinely-running
+  architecture, verified live, not assumed from `lipo` alone).
+  **Accepted, not verified:** an actual book conversion through the x86_64
+  slice (would exercise the bundled x86_64 Chromium/boko subprocess spawn
+  for the first time — the one thing never yet run) and testing on real
+  Intel hardware. Both require hands-on drag-and-drop/file-picker
+  interaction this session deliberately didn't automate, per this app's
+  own file-picker automation incident (see
+  [[feedback-macos-testing-and-automation]]) — Rosetta translating an
+  x86_64 binary is a strong signal but isn't identical to native Intel
+  execution. Rather than block the release on hardware nobody here has,
+  the decision was to ship it and disclose the gap plainly in `README.md`'s
+  Requirements section instead, so an Intel user hitting a real bug isn't
+  surprised and knows where to report it.
 
 **Long-term / speculative, needs its own dedicated scoping pass:**
 

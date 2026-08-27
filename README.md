@@ -23,7 +23,13 @@ batch finishes are all built in.
 ## Requirements
 
 - macOS 13 (Ventura) or later
-- Apple Silicon (M1 or newer): the released build is arm64 only
+- Apple Silicon or Intel — the released `.dmg` is a universal (arm64 +
+  x86_64) binary. **The x86_64 build is lightly tested:** it's confirmed to
+  launch correctly under Rosetta 2 on Apple Silicon, but hasn't been run on
+  real Intel hardware or used to actually convert a book on that
+  architecture. If you hit trouble on an Intel Mac, please
+  [open an issue](../../issues) — that's the first place a real-hardware
+  bug would show up.
 
 ## Install
 

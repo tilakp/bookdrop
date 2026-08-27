@@ -36,7 +36,16 @@ echo "build-ffi.sh: wrote $ROOT_DIR/target/AnyformFFI.xcframework"
 # exactly this. Force it: delete every previously-linked Bookdrop
 # executable and test bundle so the next `swift build`/`swift test`/
 # `Scripts/build-app.sh` is guaranteed to relink against what was just built.
+#
+# A universal (`swift build --arch arm64 --arch x86_64`, used by
+# `build-app.sh release`) writes to a different, capitalized layout —
+# `.build/apple/Products/<Config>/Bookdrop` for the lipo'd product and
+# `.build/apple/Intermediates.noindex/.../Objects-normal/<arch>/Binary/Bookdrop`
+# per-arch — neither of which the original debug/release patterns below
+# match (case and shape both differ), so both are covered explicitly.
 BOOKDROP_ROOT="$(cd "$ROOT_DIR/.." && pwd)"
-find "$BOOKDROP_ROOT/.build" \( -path "*/debug/Bookdrop" -o -path "*/release/Bookdrop" -o -name "BookdropPackageTests.xctest" \) \
+find "$BOOKDROP_ROOT/.build" \( -path "*/debug/Bookdrop" -o -path "*/release/Bookdrop" \
+     -o -path "*/Products/Release/Bookdrop" -o -path "*/Products/Debug/Bookdrop" \
+     -o -path "*/Objects-normal/*/Binary/Bookdrop" -o -name "BookdropPackageTests.xctest" \) \
     -exec rm -rf {} + 2>/dev/null || true
 echo "build-ffi.sh: cleared stale linked Bookdrop/test binaries to force relink"
