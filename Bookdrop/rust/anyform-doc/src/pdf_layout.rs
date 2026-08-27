@@ -16,6 +16,8 @@
 //! before glyphs reach here, so every `Glyph` below is assumed to carry a
 //! real, printable character with a real bounding box.
 
+use std::collections::HashMap;
+
 use anyform_core::Log;
 
 // ---- Shared vocabulary ----
@@ -161,10 +163,106 @@ pub(crate) fn group_lines(page: &PageText) -> Vec<Line> {
         clusters.last_mut().unwrap().push(g);
     }
 
-    clusters.into_iter().map(|cluster| build_line(&cluster, page.index)).collect()
+    // Word-gap detection needs a threshold calibrated per font, not per
+    // line: a single short line rarely carries enough gap samples to find
+    // a reliable split between "intra-word kerning" and "real word gap"
+    // on its own - caught live on a real book where a short dialogue-style
+    // line ("dependable, no-nonsense") had so few samples that the
+    // per-line elbow-finder mistook ordinary kerning variance for the
+    // split point, over-segmenting nearly every letter. Pooling gap
+    // samples across the whole *page*, bucketed by font size (so a page
+    // mixing a heading with body text doesn't blur two genuinely
+    // different fonts' spacing together), gives each bucket dozens to
+    // hundreds of samples instead of a handful - see
+    // `page_word_gap_thresholds`.
+    let thresholds = page_word_gap_thresholds(&clusters);
+    clusters.into_iter().map(|cluster| build_line(&cluster, page.index, &thresholds)).collect()
 }
 
-fn build_line(glyphs: &[&Glyph], page: usize) -> Line {
+/// Buckets every line's kerning-candidate gaps by rounded font size (to
+/// the nearest point - fine enough to separate a 25pt heading from 11pt
+/// body text, coarse enough that ordinary sub-point rendering jitter
+/// within "the same font" doesn't fragment one real distribution into
+/// several sparse ones) and finds one `adaptive_word_gap_threshold` per
+/// bucket from the pooled page-wide samples.
+fn page_word_gap_thresholds(clusters: &[Vec<&Glyph>]) -> HashMap<i32, f32> {
+    let mut samples_by_size: HashMap<i32, Vec<f32>> = HashMap::new();
+    for cluster in clusters {
+        for i in 1..cluster.len() {
+            if cluster[i].ch != ' ' && cluster[i - 1].ch != ' ' {
+                let gap = cluster[i].x0 - cluster[i - 1].x1;
+                if gap > 0.0 {
+                    let bucket = cluster[i].font_size.round() as i32;
+                    samples_by_size.entry(bucket).or_default().push(gap);
+                }
+            }
+        }
+    }
+    samples_by_size
+        .into_iter()
+        .map(|(bucket, mut samples)| (bucket, adaptive_word_gap_threshold(&mut samples, bucket as f32)))
+        .collect()
+}
+
+// A fixed fraction of font size cannot serve every typeface at once, and
+// neither can a single multiple of the *median* gap - both were tried live
+// against two different fonts in the same real book and each broke the
+// other. A display heading (condensed face) measured intra-word gaps of
+// ~0.15-1.8pt against real word gaps of ~3.3-4.0pt - a wide separation,
+// needing roughly 2x the median to clear. A body-text checklist section
+// (different, tighter-kerned face, many literally negative kerning pairs)
+// measured intra-word gaps running as high as ~1.6-2.0pt against real word
+// gaps as low as ~2.0-3.4pt - a *narrow* separation, where 2x the median
+// wrongly split "the" into "th e", and 3x the median missed the heading's
+// real word gaps entirely. Neither font's ratio generalizes to the other.
+//
+// What both fonts' data *do* share: a genuine, findable gap in the sorted
+// list of intra-word spacings, separating the tightly-clustered kerning
+// values from the handful of much larger true word-gap values - because
+// "letter next to letter" and "word next to word" spacing are
+// categorically different, just not by any fixed ratio across fonts.
+// Finding that split point directly (the largest jump between consecutive
+// sorted gaps) adapts to whatever a font's own kerning/spacing turns out
+// to be. It needs real statistical weight to do that reliably, though: a
+// single short line (caught live on "dependable, no-nonsense", a
+// dialogue-style line with too few kerning samples of its own) can have
+// its ordinary kerning *variance* mistaken for the split point, wrongly
+// splitting nearly every letter - which is why `page_word_gap_thresholds`
+// pools samples across a whole page's lines per font-size bucket before
+// calling this, rather than calling it per line directly.
+const WORD_GAP_MIN_SAMPLES: usize = 20;
+const WORD_GAP_MIN_JUMP: f32 = 0.5;
+
+/// Returns the midpoint of the largest jump between consecutive sorted
+/// gap values - the pooled samples' own natural boundary between
+/// intra-word kerning and real word spacing. Falls back to a fixed
+/// fraction of font size when there isn't enough data to find one
+/// reliably, or when the largest jump found is too small to be a real
+/// signal rather than noise within a single cluster (e.g. a short page
+/// whose word boundaries all happened to be marked by real space
+/// characters, so every sampled gap here is genuinely just kerning).
+fn adaptive_word_gap_threshold(kerning_samples: &mut [f32], mean_font_size: f32) -> f32 {
+    let fallback = WORD_GAP_FRACTION * mean_font_size;
+    if kerning_samples.len() < WORD_GAP_MIN_SAMPLES {
+        return fallback;
+    }
+    kerning_samples.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    let mut best_jump = 0.0f32;
+    let mut best_threshold = fallback;
+    for w in kerning_samples.windows(2) {
+        let jump = w[1] - w[0];
+        if jump > best_jump {
+            best_jump = jump;
+            best_threshold = (w[0] + w[1]) / 2.0;
+        }
+    }
+    if best_jump < WORD_GAP_MIN_JUMP {
+        return fallback;
+    }
+    best_threshold
+}
+
+fn build_line(glyphs: &[&Glyph], page: usize, thresholds: &HashMap<i32, f32>) -> Line {
     let mut text = String::new();
     let mut total_size = 0.0f32;
     let mut bold_chars = 0u32;
@@ -178,19 +276,27 @@ fn build_line(glyphs: &[&Glyph], page: usize) -> Line {
     let x1 = glyphs.iter().map(|g| g.x1).fold(f32::MIN, f32::max);
     let y_top = glyphs.iter().map(|g| g.y1).fold(f32::MIN, f32::max);
     let y_bottom = glyphs.iter().map(|g| g.y0).fold(f32::MAX, f32::min);
+    let mean_font_size = if count > 0.0 { glyphs.iter().map(|g| g.font_size).sum::<f32>() / count } else { 12.0 };
+    // Looked up from the page-wide pool (see `page_word_gap_thresholds`),
+    // not recomputed per line - a single line rarely has enough samples
+    // of its own to calibrate reliably.
+    let word_gap_threshold = thresholds
+        .get(&(mean_font_size.round() as i32))
+        .copied()
+        .unwrap_or(WORD_GAP_FRACTION * mean_font_size);
 
     for (i, g) in glyphs.iter().enumerate() {
         // Only synthesize a space from the x-gap when neither glyph is
         // already whitespace - PDFium does yield real ' ' glyphs with real
         // bounds (not every space is inkless/omitted), and real books with
         // slightly generous word spacing (seen live on a real government
-        // PDF fixture) exceed WORD_GAP_FRACTION on gaps that already have
-        // an actual space character - double-counting into "word  gap"
+        // PDF fixture) exceed the threshold on gaps that already have an
+        // actual space character - double-counting into "word  gap"
         // otherwise.
         if i > 0 && g.ch != ' ' {
             let prev = glyphs[i - 1];
             let gap = g.x0 - prev.x1;
-            if prev.ch != ' ' && gap > WORD_GAP_FRACTION * g.font_size.max(1.0) && !text.ends_with(' ') && !text.is_empty() {
+            if prev.ch != ' ' && gap > word_gap_threshold && !text.ends_with(' ') && !text.is_empty() {
                 text.push(' ');
             }
         }
@@ -230,8 +336,6 @@ pub(crate) fn strip_running_heads(pages: &mut [Vec<Line>], heights: &[f32], log:
     if pages.len() < RUNNING_HEAD_MIN_PAGES {
         return;
     }
-
-    use std::collections::HashMap;
 
     // Pass 1: same normalized text at (roughly) the same y-position,
     // repeated across >= RUNNING_HEAD_REPETITION_THRESHOLD of pages.
@@ -570,7 +674,6 @@ fn join_paragraph_lines(lines: &[&Line]) -> String {
 }
 
 fn body_font_size(lines: &[Line]) -> f32 {
-    use std::collections::HashMap;
     let mut weight_by_size: HashMap<i32, u32> = HashMap::new();
     for line in lines {
         let bucket = (line.size * 2.0).round() as i32;
@@ -587,7 +690,6 @@ fn body_font_size(lines: &[Line]) -> f32 {
 /// qualify as headings, and whether the heading signal is too weak/absent
 /// to trust (see the PDF-input plan §3.4's "large-print book" guard).
 fn heading_tiers(lines: &[Line], body_size: f32) -> (Vec<f32>, bool) {
-    use std::collections::HashMap;
     let mut weight_by_size: HashMap<i32, u32> = HashMap::new();
     let mut total_chars = 0u32;
     for line in lines {
