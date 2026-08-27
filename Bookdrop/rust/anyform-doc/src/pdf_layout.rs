@@ -116,13 +116,22 @@ pub(crate) fn group_lines(page: &PageText) -> Vec<Line> {
         return Vec::new();
     }
 
-    let mut sorted: Vec<&Glyph> = page.glyphs.iter().collect();
-    sorted.sort_by(|a, b| {
-        let ya = (a.y0 + a.y1) / 2.0;
-        let yb = (b.y0 + b.y1) / 2.0;
-        yb.partial_cmp(&ya).unwrap().then_with(|| a.x0.partial_cmp(&b.x0).unwrap())
-    });
-
+    // Deliberately does NOT sort glyphs by position - pdfium's own
+    // `chars()` order already *is* reading order (it reflects the PDF
+    // content stream's text-showing sequence, not derived from bounding
+    // boxes), and is more trustworthy than re-deriving order from x0/y0.
+    // Caught live on a real commercially-typeset PDF: some producers
+    // (calibre's own PDF writer among them) emit word-space characters
+    // with a degenerate zero-width bounding box whose reported x-position
+    // can fall slightly *after* the following glyph's - sorting by x0
+    // then reordered the space to land one character late ("put them
+    // through" -> "put them t hrough"), corrupting otherwise-perfectly
+    // extracted text. Trusting emission order for both which line a glyph
+    // belongs to and its position within that line sidesteps the problem
+    // entirely, since it never depends on a bounding box being reliable
+    // for ordering, only for line-clustering (where being off by a
+    // fraction of a glyph height, not a whole glyph width, is harmless).
+    //
     // Cluster against an *expanding* [y_min, y_max] window for the current
     // line, not a fixed anchor set once at the line's first glyph.
     // Ascenders ('h','k','l','t'...) push y1 up and descenders
@@ -137,7 +146,7 @@ pub(crate) fn group_lines(page: &PageText) -> Vec<Line> {
     let mut clusters: Vec<Vec<&Glyph>> = Vec::new();
     let mut cluster_y_min = f32::MAX;
     let mut cluster_y_max = f32::MIN;
-    for g in sorted {
+    for g in &page.glyphs {
         let y_mid = (g.y0 + g.y1) / 2.0;
         let threshold = (LINE_BREAK_FRACTION * (g.y1 - g.y0).abs()).max(0.5);
         let fits = !clusters.is_empty() && y_mid >= cluster_y_min - threshold && y_mid <= cluster_y_max + threshold;
@@ -152,13 +161,7 @@ pub(crate) fn group_lines(page: &PageText) -> Vec<Line> {
         clusters.last_mut().unwrap().push(g);
     }
 
-    clusters
-        .into_iter()
-        .map(|mut cluster| {
-            cluster.sort_by(|a, b| a.x0.partial_cmp(&b.x0).unwrap());
-            build_line(&cluster, page.index)
-        })
-        .collect()
+    clusters.into_iter().map(|cluster| build_line(&cluster, page.index)).collect()
 }
 
 fn build_line(glyphs: &[&Glyph], page: usize) -> Line {
@@ -166,8 +169,13 @@ fn build_line(glyphs: &[&Glyph], page: usize) -> Line {
     let mut total_size = 0.0f32;
     let mut bold_chars = 0u32;
     let count = glyphs.len() as f32;
-    let x0 = glyphs.first().map(|g| g.x0).unwrap_or(0.0);
-    let x1 = glyphs.last().map(|g| g.x1).unwrap_or(0.0);
+    // min/max fold rather than first()/last(): natural emission order is
+    // left-to-right but not guaranteed jitter-free at the extremes (the
+    // same degenerate-bbox glyphs that motivated dropping the x0 sort
+    // above), and the line's bounding box feeds column detection, so it's
+    // worth being robust here even though text order no longer depends on it.
+    let x0 = glyphs.iter().map(|g| g.x0).fold(f32::MAX, f32::min);
+    let x1 = glyphs.iter().map(|g| g.x1).fold(f32::MIN, f32::max);
     let y_top = glyphs.iter().map(|g| g.y1).fold(f32::MIN, f32::max);
     let y_bottom = glyphs.iter().map(|g| g.y0).fold(f32::MAX, f32::min);
 
@@ -977,6 +985,33 @@ mod tests {
         let lines = group_lines(&page);
         assert_eq!(lines.len(), 1);
         assert_eq!(lines[0].text, "Hello World");
+    }
+
+    #[test]
+    fn degenerate_zero_width_space_does_not_reorder_the_following_letter() {
+        // Caught live on a real commercially-typeset PDF (calibre's own PDF
+        // writer, of all things): a word-space glyph can carry a
+        // zero-width bounding box (x0 == x1) whose reported x-position
+        // falls *after* the following real letter's x0 - e.g. observed
+        // "put them|<space x0=138.71>|<'t' of through, x0=138.04>", i.e.
+        // the space's own x0 is numerically greater than the very next
+        // glyph's x0. pdfium's emission order is still correct (space,
+        // then 't') - a naive sort-by-x0 would reorder them, producing
+        // "put themt hrough" instead of "put them through". This
+        // hand-built fixture reproduces that exact relative-position
+        // inversion.
+        let mut glyphs = text_line("put them", 72.0, 12.0, 0);
+        let last = glyphs.last().unwrap().clone();
+        // A degenerate space: zero-width, positioned *after* the 't' that
+        // logically follows it - the inversion that broke a naive x0 sort.
+        glyphs.push(Glyph { ch: ' ', x0: last.x1 + 6.0, y0: last.y0, x1: last.x1 + 6.0, y1: last.y1, font_size: 1.0, font_name: "".into(), bold: false, italic: false });
+        let mut rest = text_line("through", last.x1 + 5.3, 12.0, 0); // starts slightly BEFORE the space's own x0
+        glyphs.append(&mut rest);
+
+        let page = PageText { index: 0, width: 612.0, height: 792.0, glyphs, image_area_ratio: 0.0 };
+        let lines = group_lines(&page);
+        assert_eq!(lines.len(), 1);
+        assert_eq!(lines[0].text, "put them through", "emission order must win over a misleading bounding box");
     }
 
     #[test]
