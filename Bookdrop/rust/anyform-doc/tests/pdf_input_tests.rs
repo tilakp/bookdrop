@@ -172,6 +172,38 @@ fn one_pdf_input_plugin_reaches_every_output_format() {
 }
 
 #[test]
+fn pdf_input_output_epub_passes_epubcheck() {
+    // Closes a real gap: every other check in this file inspects extracted
+    // *text*, none confirms the EPUB container itself is spec-valid.
+    // epub_output.rs's own doc comment already establishes that a
+    // freshly-generated (not byte-copied) chapter set round-trips through
+    // `EpubOutput` with zero epubcheck errors - PdfInput's synthesized
+    // XHTML chapters are exactly that case (see pdf_layout.rs's
+    // `render_chapter_xhtml`), so this should hold here too, unlike the
+    // EPUB2-source case epub_output.rs documents as a known exception.
+    //
+    // Skips (not fails) when `epubcheck` isn't installed, matching this
+    // project's existing "manual, not gated in CI" epubcheck practice
+    // (see epub_output.rs) - this test upgrades that to automatic
+    // whenever the tool happens to be present, without making it a hard
+    // requirement for `cargo test` on a machine that doesn't have it.
+    if std::process::Command::new("epubcheck").arg("--version").output().is_err() {
+        eprintln!("epubcheck not found on PATH - skipping pdf_input_output_epub_passes_epubcheck (install with `brew install epubcheck` to run it)");
+        return;
+    }
+
+    let output = std::env::temp_dir().join(format!("anyform-pdf-in-epubcheck-{}.epub", std::process::id()));
+    let registry = anyform_doc::document_registry();
+    registry.convert(&fixture("minimal-text.pdf"), &output, &Options::new(), &StdLog).expect("PDF should convert to EPUB");
+
+    let result = std::process::Command::new("epubcheck").arg(&output).output().expect("epubcheck should run");
+    let _ = std::fs::remove_file(&output);
+
+    let report = format!("{}{}", String::from_utf8_lossy(&result.stdout), String::from_utf8_lossy(&result.stderr));
+    assert!(result.status.success(), "epubcheck reported errors on a PDF-input-produced EPUB:\n{report}");
+}
+
+#[test]
 fn concurrent_pdf_conversions_do_not_crash_pdfium() {
     // pdfium is not thread-safe on its own; pdfium-render's `thread_safe`
     // feature (enabled in Cargo.toml) serializes FFI calls behind its own

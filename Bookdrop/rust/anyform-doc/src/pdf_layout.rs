@@ -1089,6 +1089,80 @@ mod tests {
         assert_eq!(lines[0].text, "Hello World");
     }
 
+    /// Builds one line's glyphs from `(char, gap_before)` pairs — `gap_before`
+    /// is the horizontal gap between this glyph's x0 and the previous
+    /// glyph's x1 (ignored for the first char). Lets a test hand-pick
+    /// exactly which gaps are "kerning" and which are "real word gaps"
+    /// without needing real font metrics.
+    fn glyphs_from_gaps(spec: &[(char, f32)], x0: f32, y: f32, size: f32) -> Vec<Glyph> {
+        let mut out = Vec::new();
+        let mut x = x0;
+        let w = size * 0.6;
+        for (i, (ch, gap_before)) in spec.iter().enumerate() {
+            if i > 0 {
+                x += gap_before;
+            }
+            out.push(glyph(*ch, x, y, x + w, y + size, size));
+            x += w;
+        }
+        out
+    }
+
+    #[test]
+    fn page_level_pooling_splits_a_heading_too_short_to_calibrate_on_its_own() {
+        // Caught live on a real book: "Marcus Was a Victim of His
+        // Blindspots" collapsed to "MarcusWasaVictimofHisBlindspots"
+        // because a single heading line rarely carries enough intra-word
+        // gap samples to find its own reliable split between kerning and
+        // real word gaps - see `page_word_gap_thresholds`'s doc comment.
+        //
+        // This fixture reproduces that shape: four short heading-style
+        // lines (24pt), each with only 6 kerning samples of its own -
+        // below WORD_GAP_MIN_SAMPLES (20), so any one of them judged
+        // alone falls back to the fixed-fraction heuristic
+        // (0.25 x 24pt = 6.0pt), well above this heading's own real word
+        // gap (3.5pt) - it would wrongly run every word together. Pooled
+        // across all four lines (24 kerning + 8 word-gap samples), there's
+        // enough data to find the real elbow instead (verified live: with
+        // `page_word_gap_thresholds` stubbed to return an empty map -
+        // simulating "no pooling" - this test fails exactly as described,
+        // and passes again once pooling is restored).
+        //
+        // A differently-kerned body font (11pt) on the same page proves
+        // the two don't contaminate each other - they land in separate
+        // buckets by rounded font size, each finding its own elbow (body:
+        // kerning up to 1.0pt vs. word gaps of 2.4pt, threshold ~1.7pt -
+        // deliberately a much narrower kerning/word-gap separation than
+        // the heading's, so a shared/contaminated threshold would break
+        // one font or the other, same as the real book's heading vs.
+        // checklist-section regression).
+        let heading_spec = [
+            ('A', 0.0), ('B', 0.4), ('C', 0.4), ('D', 3.5), ('E', 0.4), ('F', 0.4), ('G', 3.5), ('H', 0.4), ('I', 0.4),
+        ];
+        let body_spec = [
+            ('X', 0.0), ('Y', 0.8), ('Z', 1.0), ('U', 2.4), ('V', 0.8), ('W', 1.0), ('R', 2.4), ('S', 0.8), ('T', 1.0),
+        ];
+
+        let mut glyphs = Vec::new();
+        for i in 0..4 {
+            glyphs.extend(glyphs_from_gaps(&heading_spec, 72.0, 700.0 - i as f32 * 40.0, 24.0));
+        }
+        for i in 0..4 {
+            glyphs.extend(glyphs_from_gaps(&body_spec, 72.0, 500.0 - i as f32 * 20.0, 11.0));
+        }
+
+        let page = PageText { index: 0, width: 612.0, height: 792.0, glyphs, image_area_ratio: 0.0 };
+        let lines = group_lines(&page);
+        assert_eq!(lines.len(), 8, "expected 4 heading lines + 4 body lines: {lines:?}");
+
+        for line in &lines[0..4] {
+            assert_eq!(line.text, "ABC DEF GHI", "a short heading line should be split correctly once pooled with its page: {line:?}");
+        }
+        for line in &lines[4..8] {
+            assert_eq!(line.text, "XYZ UVW RST", "a differently-kerned body font on the same page must keep its own threshold: {line:?}");
+        }
+    }
+
     #[test]
     fn degenerate_zero_width_space_does_not_reorder_the_following_letter() {
         // Caught live on a real commercially-typeset PDF (calibre's own PDF
