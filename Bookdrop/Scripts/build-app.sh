@@ -23,11 +23,11 @@ echo "Building anyform engine (Rust)..."
 if [ "$CONFIG" = "release" ]; then
     echo "Building (release, universal arm64+x86_64)..."
     swift build -c release --arch arm64 --arch x86_64 --package-path "$ROOT_DIR"
-    # SwiftPM's multi-arch build lands the lipo'd product under
-    # .build/apple/Products/<Config>/ (the Xcode-style "Products" layout),
-    # not the normal single-arch .build/<config>/ used below — confirmed by
-    # running the build and inspecting it directly, not assumed.
-    BUILT_EXE="$ROOT_DIR/.build/apple/Products/Release/Bookdrop"
+    # SwiftPM's multi-arch build lands the lipo'd product in an Xcode-style
+    # "Products" folder, not the normal single-arch .build/<config>/ used
+    # below. The folder moved between toolchains (.build/apple/ before Xcode
+    # 27, .build/out/ after), so ask SwiftPM for it instead of hardcoding it.
+    BUILT_EXE="$(swift build -c release --arch arm64 --arch x86_64 --package-path "$ROOT_DIR" --show-bin-path)/Bookdrop"
 
     # A single-arch release binary must never silently ship — the failure
     # mode (an Intel user's app refusing to launch) is otherwise invisible
