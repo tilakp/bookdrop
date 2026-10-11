@@ -12,7 +12,7 @@ APP_NAME="Bookdrop.app"
 VERSION="$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" Resources/Info.plist)"
 OUT="release"
 STAGING="$OUT/staging"
-DMG="$OUT/Bookdrop-$VERSION.dmg"
+DMG="$OUT/Bookdrop.dmg"
 
 echo "==> Building Release (v$VERSION)"
 "$ROOT_DIR/Scripts/build-app.sh" release
