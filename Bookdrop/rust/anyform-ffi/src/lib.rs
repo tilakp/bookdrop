@@ -131,14 +131,19 @@ enum ErrorResult {
 /// `{"status":"error","message":"..."}`) for the UI's file-loaded panel.
 /// Caller must free the returned pointer with `anyform_free_string`.
 ///
+/// `options_json` may be null; it carries the same tool paths
+/// (`boko_path`, `pdfium_path`) as `anyform_convert_start`.
+///
 /// # Safety
-/// `path` must be a valid, NUL-terminated UTF-8 C string.
+/// `path` must be a valid, NUL-terminated UTF-8 C string. `options_json`
+/// must be null or a valid, NUL-terminated UTF-8 C string.
 #[no_mangle]
-pub unsafe extern "C" fn anyform_parse_book(path: *const c_char) -> *mut c_char {
+pub unsafe extern "C" fn anyform_parse_book(path: *const c_char, options_json: *const c_char) -> *mut c_char {
     let result: Result<BookInfo, String> = catch_panic(|| {
         let path = c_str_to_pathbuf(path)?;
+        let opts = options_from_json(options_json)?;
         let registry = anyform_doc::document_registry();
-        let ir = registry.parse(&path, &Options::new(), &anyform_core::StdLog).map_err(|e| e.to_string())?;
+        let ir = registry.parse(&path, &opts, &anyform_core::StdLog).map_err(|e| e.to_string())?;
         Ok(BookInfo::from(&ir))
     });
 

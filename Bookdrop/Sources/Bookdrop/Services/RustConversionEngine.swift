@@ -127,68 +127,6 @@ private func rustCompleteCallback(
     context.complete(success: success == 1, message: message)
 }
 
-/// Locates the Chromium binary bundled into the real `.app`
-/// (`Contents/Resources/Chromium/<arch>/…`, copied there by
-/// `Scripts/build-app.sh` for both architectures — see plan Phase 7/item 4)
-/// for whichever architecture is actually running. Returns `nil` when not
-/// present — `swift test`/`swift run` without going through build-app.sh —
-/// so the Rust side's own dev-time fallback (relative to `anyform-doc`'s
-/// `CARGO_MANIFEST_DIR`) finds the vendored copy instead.
-private func bundledChromiumPath() -> String? {
-    guard let resourceURL = Bundle.main.resourceURL else { return nil }
-    #if arch(arm64)
-        let arch = "mac-arm64"
-    #elseif arch(x86_64)
-        let arch = "mac-x64"
-    #else
-        return nil
-    #endif
-    let path = resourceURL.appendingPathComponent("Chromium/\(arch)/chrome-headless-shell").path
-    return FileManager.default.fileExists(atPath: path) ? path : nil
-}
-
-/// Same pattern as `bundledChromiumPath()`, for the `libpdfium.dylib`
-/// `Scripts/build-app.sh` copies into `Contents/Resources/Pdfium/<arch>/`
-/// (see `rust/scripts/fetch-pdfium.sh`). `PdfInput`'s own dev-tree fallback
-/// (relative to `anyform-doc`'s `CARGO_MANIFEST_DIR`) covers `swift test`/
-/// `swift run` when this returns `nil`.
-private func bundledPdfiumPath() -> String? {
-    guard let resourceURL = Bundle.main.resourceURL else { return nil }
-    #if arch(arm64)
-        let arch = "mac-arm64"
-    #elseif arch(x86_64)
-        let arch = "mac-x64"
-    #else
-        return nil
-    #endif
-    let path = resourceURL.appendingPathComponent("Pdfium/\(arch)/libpdfium.dylib").path
-    return FileManager.default.fileExists(atPath: path) ? path : nil
-}
-
-/// Same pattern again, for the bundled `boko` binary. This was a real,
-/// pre-existing gap: `KindleInput` on the Rust side (`kindle.rs`) has
-/// looked for a `boko_path` option since it was written, but nothing here
-/// ever set one — every shipped-app AZW3/KFX/MOBI conversion silently fell
-/// through to Rust's dev-tree fallback (a path baked in from
-/// `CARGO_MANIFEST_DIR` at compile time), which only happens to exist on a
-/// developer's own machine. `KindleNormalizer` has its own private copy of
-/// this same lookup for the Swift-side preview parse — kept separate
-/// rather than shared, matching this codebase's existing pattern of
-/// independent per-call-site path resolution (Rust has three near-identical
-/// `resolve_*_path` functions for exactly this reason).
-private func bundledBokoPath() -> String? {
-    guard let resourceURL = Bundle.main.resourceURL else { return nil }
-    #if arch(arm64)
-        let arch = "mac-arm64"
-    #elseif arch(x86_64)
-        let arch = "mac-x64"
-    #else
-        return nil
-    #endif
-    let path = resourceURL.appendingPathComponent("Boko/\(arch)/boko").path
-    return FileManager.default.fileExists(atPath: path) ? path : nil
-}
-
 /// Builds the JSON `anyform_convert_start` reads its render options from —
 /// mirrors every field of `PDFOptions` (`Sources/Bookdrop/Models/PDFOptions.swift`)
 /// so nothing in the Advanced Options UI is silently ignored by the Rust
@@ -225,34 +163,17 @@ private func conversionOptionsJSON(pdfOptions: PDFOptions) -> String {
         "include_headers": pdfOptions.includeHeaders,
         "include_footers": pdfOptions.includeFooters,
     ]
-    if let chromiumPath = bundledChromiumPath() {
-        payload["chromium_path"] = chromiumPath
-    }
-    if let pdfiumPath = bundledPdfiumPath() {
-        payload["pdfium_path"] = pdfiumPath
-    }
-    if let bokoPath = bundledBokoPath() {
-        payload["boko_path"] = bokoPath
-    }
+    payload.merge(BundledTools.engineOptions) { _, tool in tool }
     guard let data = try? JSONSerialization.data(withJSONObject: payload),
         let json = String(data: data, encoding: .utf8)
     else { return "{}" }
     return json
 }
 
-/// Calls into the Rust `anyform` engine (`Bookdrop/rust/`) via the
-/// `anyform-ffi` C ABI — every output format (PDF/EPUB/TXT/HTML/DOCX) as
-/// of Phase 6 (see `ANYFORM-FULL-SPEC.md`). Only `book.sourceURL.path` and
-/// `outputURL.path` cross the FFI boundary; the Rust side re-parses the
-/// original file from scratch via its own registry (`document_registry()`
-/// in `anyform-doc`), which dispatches both input parsing (by
-/// `sourceURL`'s extension) and output format (by `outputURL`'s
-/// extension) — so this Swift function needed no format-specific
-/// branching to begin with, and none was added for the three new output
-/// formats. `book.contentDirectory`/`.spine`/`.manifest`/`.toc` (the rest
-/// of what `EpubParser`/`KindleNormalizer` populate) are unused here;
-/// they still matter for `FileLoadedView`'s UI display and
-/// `HistoryEntry` — see `KindleNormalizer`'s own doc comment.
+/// Runs one conversion in the Rust `anyform` engine through the
+/// `anyform-ffi` C ABI. Only the source and output paths cross the boundary:
+/// the engine parses the source again and picks the input and output
+/// plugins from the two file extensions, so no format needs Swift code.
 @MainActor
 enum RustConversionEngine {
     static func convert(

@@ -10,14 +10,8 @@ struct EmptyStateView: View {
 
     @State private var isTargeted = false
 
-    /// EPUB, PDF, and every Kindle-family extension `KindleNormalizer`
-    /// accepts (see its `kindleExtensions`). Unlike the ebook extensions,
-    /// "pdf" *does* resolve to a real built-in system UTType — left in this
-    /// same list (rather than special-cased) since `acceptedTypes` below
-    /// derives from filename extension either way, so the asymmetry is
-    /// invisible here; don't "fix" it by moving pdf out.
-    private static let acceptedExtensions = ["epub", "pdf"] + KindleNormalizer.kindleExtensions.sorted()
-    private static let acceptedTypes: [UTType] = acceptedExtensions.compactMap { UTType(filenameExtension: $0) }
+    private static let acceptedTypes: [UTType] =
+        BookLoader.supportedExtensions.sorted().compactMap { UTType(filenameExtension: $0) }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -147,10 +141,9 @@ struct EmptyStateView: View {
         for provider in fileProviders {
             group.enter()
             provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier) { item, _ in
-                if let data = item as? Data,
-                    let url = URL(dataRepresentation: data, relativeTo: nil),
-                    Self.acceptedExtensions.contains(url.pathExtension.lowercased())
-                {
+                // Unsupported files are passed on too, so the app can say
+                // why it will not open them instead of doing nothing.
+                if let data = item as? Data, let url = URL(dataRepresentation: data, relativeTo: nil) {
                     collected.add(url)
                 }
                 group.leave()

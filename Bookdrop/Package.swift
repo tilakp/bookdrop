@@ -20,9 +20,6 @@ let package = Package(
     products: [
         .executable(name: "Bookdrop", targets: ["Bookdrop"])
     ],
-    dependencies: [
-        .package(url: "https://github.com/weichsel/ZIPFoundation.git", from: "0.9.0")
-    ],
     targets: [
         .target(
             name: "CAnyform",
@@ -30,10 +27,7 @@ let package = Package(
         ),
         .executableTarget(
             name: "Bookdrop",
-            dependencies: [
-                .product(name: "ZIPFoundation", package: "ZIPFoundation"),
-                "CAnyform",
-            ],
+            dependencies: ["CAnyform"],
             path: "Sources/Bookdrop",
             linkerSettings: [
                 .unsafeFlags(["-L", rustLibDir, "-lanyform_ffi"]),

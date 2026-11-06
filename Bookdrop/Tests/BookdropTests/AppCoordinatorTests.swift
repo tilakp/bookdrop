@@ -30,8 +30,8 @@ final class AppCoordinatorTests: XCTestCase {
     /// Loads the fixture into `coordinator` and redirects its output directory to a
     /// scratch folder — `handleFilesSelected` resets `outputDirectory` from settings as
     /// part of loading, so the redirect must happen *after*, not before.
-    private func loadFixture(into coordinator: AppCoordinator) -> Book {
-        coordinator.handleFilesSelected([fixtureURL()])
+    private func loadFixture(into coordinator: AppCoordinator) async -> Book {
+        await coordinator.handleFilesSelected([fixtureURL()])?.value
         coordinator.outputDirectory = scratchDir("output")
         guard case .loaded(let book) = coordinator.screen else {
             fatalError("expected .loaded after selecting the fixture")
@@ -41,19 +41,19 @@ final class AppCoordinatorTests: XCTestCase {
 
     // MARK: - File selection
 
-    func testSelectingValidFileTransitionsToLoaded() {
+    func testSelectingValidFileTransitionsToLoaded() async {
         let coordinator = makeCoordinator()
-        let book = loadFixture(into: coordinator)
+        let book = await loadFixture(into: coordinator)
         XCTAssertEqual(book.title, "Minimal Fixture Book")
     }
 
-    func testSelectingInvalidFileTransitionsToError() throws {
+    func testSelectingInvalidFileTransitionsToError() async throws {
         let coordinator = makeCoordinator()
         let bogus = FileManager.default.temporaryDirectory.appendingPathComponent("bogus-\(UUID().uuidString).epub")
         try "not a zip".write(to: bogus, atomically: true, encoding: .utf8)
         defer { try? FileManager.default.removeItem(at: bogus) }
 
-        coordinator.handleFilesSelected([bogus])
+        await coordinator.handleFilesSelected([bogus])?.value
         guard case .error(let message, _, let details) = coordinator.screen else {
             XCTFail("expected .error, got \(coordinator.screen)")
             return
@@ -62,9 +62,9 @@ final class AppCoordinatorTests: XCTestCase {
         XCTAssertNotNil(details)
     }
 
-    func testSelectingMultipleFilesTransitionsToMultipleFiles() {
+    func testSelectingMultipleFilesTransitionsToMultipleFiles() async {
         let coordinator = makeCoordinator()
-        coordinator.handleFilesSelected([fixtureURL(), fixtureURL()])
+        await coordinator.handleFilesSelected([fixtureURL(), fixtureURL()])?.value
         guard case .multipleFiles(let model) = coordinator.screen else {
             XCTFail("expected .multipleFiles, got \(coordinator.screen)")
             return
@@ -76,7 +76,7 @@ final class AppCoordinatorTests: XCTestCase {
 
     func testConvertWithNoCollisionStartsConversionDirectly() async {
         let coordinator = makeCoordinator()
-        let book = loadFixture(into: coordinator)
+        let book = await loadFixture(into: coordinator)
 
         let task = coordinator.beginConvert(book: book)
         XCTAssertNotNil(task, "no existing file — should convert immediately, not prompt")
@@ -91,9 +91,9 @@ final class AppCoordinatorTests: XCTestCase {
         }
     }
 
-    func testConvertWithCollisionShowsDuplicateDialog() throws {
+    func testConvertWithCollisionShowsDuplicateDialog() async throws {
         let coordinator = makeCoordinator()
-        let book = loadFixture(into: coordinator)
+        let book = await loadFixture(into: coordinator)
         let candidate = coordinator.outputDirectory.appendingPathComponent("Minimal Fixture Book.pdf")
         try Data().write(to: candidate)
 
@@ -106,9 +106,9 @@ final class AppCoordinatorTests: XCTestCase {
         XCTAssertEqual(filename, "Minimal Fixture Book.pdf")
     }
 
-    func testDuplicateCancelReturnsToLoaded() throws {
+    func testDuplicateCancelReturnsToLoaded() async throws {
         let coordinator = makeCoordinator()
-        let book = loadFixture(into: coordinator)
+        let book = await loadFixture(into: coordinator)
         try Data().write(to: coordinator.outputDirectory.appendingPathComponent("Minimal Fixture Book.pdf"))
         coordinator.beginConvert(book: book)
 
@@ -121,7 +121,7 @@ final class AppCoordinatorTests: XCTestCase {
 
     func testDuplicateReplaceOverwritesExistingFile() async throws {
         let coordinator = makeCoordinator()
-        let book = loadFixture(into: coordinator)
+        let book = await loadFixture(into: coordinator)
         let candidate = coordinator.outputDirectory.appendingPathComponent("Minimal Fixture Book.pdf")
         try Data().write(to: candidate)
         coordinator.beginConvert(book: book)
@@ -139,7 +139,7 @@ final class AppCoordinatorTests: XCTestCase {
 
     func testDuplicateKeepBothWritesNumberedFile() async throws {
         let coordinator = makeCoordinator()
-        let book = loadFixture(into: coordinator)
+        let book = await loadFixture(into: coordinator)
         let candidate = coordinator.outputDirectory.appendingPathComponent("Minimal Fixture Book.pdf")
         try Data().write(to: candidate)
         coordinator.beginConvert(book: book)
@@ -168,25 +168,25 @@ final class AppCoordinatorTests: XCTestCase {
         XCTAssertEqual(resolved.path, sourceDir.path)
     }
 
-    func testPreserveStylingSettingAppliedWhenBookLoads() {
+    func testPreserveStylingSettingAppliedWhenBookLoads() async {
         let history = HistoryStore(directory: scratchDir("history"))
         let settings = SettingsStore(defaults: scratchDefaults())
         settings.preserveOriginalStylingByDefault = false
         let coordinator = AppCoordinator(historyStore: history, settingsStore: settings)
         coordinator.performSideEffects = false
 
-        coordinator.handleFilesSelected([fixtureURL()])
+        await coordinator.handleFilesSelected([fixtureURL()])?.value
         XCTAssertFalse(coordinator.pdfOptions.preserveEpubStyling)
     }
 
-    func testOutputDirectoryFollowsSameAsSourceSettingOnLoad() {
+    func testOutputDirectoryFollowsSameAsSourceSettingOnLoad() async {
         let history = HistoryStore(directory: scratchDir("history"))
         let settings = SettingsStore(defaults: scratchDefaults())
         settings.defaultOutputLocation = .sameAsSource
         let coordinator = AppCoordinator(historyStore: history, settingsStore: settings)
         coordinator.performSideEffects = false
 
-        coordinator.handleFilesSelected([fixtureURL()])
+        await coordinator.handleFilesSelected([fixtureURL()])?.value
         XCTAssertEqual(coordinator.outputDirectory.path, fixtureURL().deletingLastPathComponent().path)
     }
 
@@ -194,7 +194,7 @@ final class AppCoordinatorTests: XCTestCase {
 
     func testCancelConversionReturnsToLoaded() async {
         let coordinator = makeCoordinator()
-        let book = loadFixture(into: coordinator)
+        let book = await loadFixture(into: coordinator)
 
         let task = coordinator.beginConvert(book: book)
         guard case .converting(_, let progress) = coordinator.screen else {
@@ -228,7 +228,7 @@ final class AppCoordinatorTests: XCTestCase {
         try FileManager.default.copyItem(at: fixtureURL(), to: sourceCopy)
         let originalBytes = try Data(contentsOf: sourceCopy)
 
-        let book = try EpubParser.parse(fileAt: sourceCopy)
+        let book = try await BookLoader.load(sourceCopy)
         coordinator.outputDirectory = workDir
         XCTAssertEqual(book.sourceURL.path, sourceCopy.path, "test setup: source and candidate output must collide")
 
@@ -251,5 +251,45 @@ final class AppCoordinatorTests: XCTestCase {
         }
         XCTAssertNotEqual(info.outputURL.path, sourceCopy.path, "output must land at a different path than the source")
         XCTAssertEqual(info.outputURL.lastPathComponent, "Minimal Fixture Book (1).epub")
+    }
+
+    // MARK: - Review fixes
+
+    func testUnsupportedFileShowsAnErrorInsteadOfDoingNothing() async {
+        let coordinator = makeCoordinator()
+        await coordinator.handleFilesSelected([URL(fileURLWithPath: "/tmp/notes.rtf")])?.value
+        guard case .error(let message, _, _) = coordinator.screen else {
+            return XCTFail("expected .error, got \(coordinator.screen)")
+        }
+        XCTAssertEqual(message, "Bookdrop can't open .rtf files.")
+    }
+
+    func testUnsupportedFilesInABatchAreSkipped() async {
+        let coordinator = makeCoordinator()
+        await coordinator.handleFilesSelected([fixtureURL(), URL(fileURLWithPath: "/tmp/notes.rtf")])?.value
+        guard case .loaded = coordinator.screen else {
+            return XCTFail("one supported file should load directly, got \(coordinator.screen)")
+        }
+    }
+
+    func testLastOutputFormatIsRemembered() {
+        let settings = SettingsStore(defaults: InMemoryKeyValueStore())
+        let first = AppCoordinator(historyStore: HistoryStore(directory: scratchDir("h1")), settingsStore: settings)
+        first.outputFormat = .docx
+        let second = AppCoordinator(historyStore: HistoryStore(directory: scratchDir("h2")), settingsStore: settings)
+        XCTAssertEqual(second.outputFormat, .docx)
+
+        settings.rememberLastOutputFormat = false
+        let third = AppCoordinator(historyStore: HistoryStore(directory: scratchDir("h3")), settingsStore: settings)
+        XCTAssertEqual(third.outputFormat, .pdf)
+    }
+
+    func testAskEveryTimePromptsOncePerLoadedBook() async {
+        let settings = SettingsStore(defaults: InMemoryKeyValueStore())
+        settings.defaultOutputLocation = .askEveryTime
+        let coordinator = AppCoordinator(historyStore: HistoryStore(directory: scratchDir("h")), settingsStore: settings)
+        coordinator.performSideEffects = false
+        await coordinator.handleFilesSelected([fixtureURL()])?.value
+        XCTAssertTrue(coordinator.needsOutputDirectoryPrompt)
     }
 }

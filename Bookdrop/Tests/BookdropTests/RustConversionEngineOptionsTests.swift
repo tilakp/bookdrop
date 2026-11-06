@@ -33,7 +33,7 @@ final class RustConversionEngineOptionsTests: XCTestCase {
 
     func testCustomPDFOptionsReachTheRenderedOutput() async throws {
         let coordinator = makeCoordinator()
-        coordinator.handleFilesSelected([fixtureURL()])
+        await coordinator.handleFilesSelected([fixtureURL()])?.value
         coordinator.outputDirectory = scratchDir("output")
         guard case .loaded(let book) = coordinator.screen else {
             return XCTFail("expected .loaded after selecting the fixture")

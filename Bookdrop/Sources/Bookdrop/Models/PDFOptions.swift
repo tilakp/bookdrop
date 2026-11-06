@@ -56,7 +56,7 @@ struct PDFOptions {
     var includeCover = true
     var generateTableOfContents = true
 
-    // Only read when pageSize == .custom.
+    // Only read when pageSize == .custom. `pageDimensions` clamps them.
     var customPageWidthInches: Double = 8.5
     var customPageHeightInches: Double = 11
 
@@ -67,7 +67,6 @@ struct PDFOptions {
     // of calibre's "more spacious" look, not just wider margins alone.
     var fontSizePt: Double = 15
     var lineSpacing: Double = 1.2
-    var startChaptersOnNewPage = true
     var preserveEpubStyling = true
     var removePublisherStyling = false
     var showPageNumbers = true
@@ -76,8 +75,13 @@ struct PDFOptions {
 
     var pageDimensions: CGSize {
         let pointsPerInch: CGFloat = 72
+        // The text fields accept any number; 0 or negative sizes make the
+        // renderer fail with an unclear error.
+        let clamp = { (inches: Double) in min(max(inches, 1), 50) }
         let base = pageSize.dimensions
-            ?? CGSize(width: customPageWidthInches * pointsPerInch, height: customPageHeightInches * pointsPerInch)
+            ?? CGSize(
+                width: clamp(customPageWidthInches) * pointsPerInch,
+                height: clamp(customPageHeightInches) * pointsPerInch)
         return orientation == .landscape ? CGSize(width: base.height, height: base.width) : base
     }
 }

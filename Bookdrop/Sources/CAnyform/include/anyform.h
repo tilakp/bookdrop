@@ -27,10 +27,14 @@ typedef struct AnyformCancelToken AnyformCancelToken;
  * `{"status":"error","message":"..."}`) for the UI's file-loaded panel.
  * Caller must free the returned pointer with `anyform_free_string`.
  *
+ * `options_json` may be null; it carries the same tool paths
+ * (`boko_path`, `pdfium_path`) as `anyform_convert_start`.
+ *
  * # Safety
- * `path` must be a valid, NUL-terminated UTF-8 C string.
+ * `path` must be a valid, NUL-terminated UTF-8 C string. `options_json`
+ * must be null or a valid, NUL-terminated UTF-8 C string.
  */
- char *anyform_parse_book(const char *path);
+ char *anyform_parse_book(const char *path, const char *options_json);
 
 /**
  * Starts an async conversion on a background thread. `on_progress` may be

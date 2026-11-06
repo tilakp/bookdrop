@@ -36,7 +36,6 @@ struct AdvancedOptionsView: View {
             }
 
             section("Layout") {
-                Toggle("Start chapters on new page", isOn: $options.startChaptersOnNewPage)
                 Toggle("Preserve EPUB styling", isOn: $options.preserveEpubStyling)
                 Toggle("Remove publisher styling", isOn: $options.removePublisherStyling)
             }

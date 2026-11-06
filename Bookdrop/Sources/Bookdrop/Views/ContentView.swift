@@ -20,19 +20,22 @@ struct ContentView: View {
             case .empty:
                 EmptyStateView(
                     historyStore: historyStore,
-                    onFilesSelected: coordinator.handleFilesSelected,
+                    onFilesSelected: { coordinator.handleFilesSelected($0) },
                     onSettings: { showSettings = true },
                     onConvertAgain: { entry in
                         coordinator.handleFilesSelected([URL(fileURLWithPath: entry.sourcePath)])
                     }
                 )
+            case .loading(let filename):
+                ProgressView("Opening \(filename)\u{2026}")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             case .loaded(let book):
                 FileLoadedView(
                     book: book,
                     options: $coordinator.pdfOptions,
                     format: $coordinator.outputFormat,
                     outputDirectory: $coordinator.outputDirectory,
-                    settingsStore: settingsStore,
+                    needsOutputDirectoryPrompt: $coordinator.needsOutputDirectoryPrompt,
                     onBack: { coordinator.screen = .empty },
                     onConvert: { coordinator.beginConvert(book: book) },
                     onSettings: { showSettings = true }

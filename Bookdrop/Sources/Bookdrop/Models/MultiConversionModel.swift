@@ -20,6 +20,8 @@ final class MultiConversionModel: ObservableObject {
     @Published var isRunning = false
     @Published var isCancelled = false
 
+    private var runTask: Task<Void, Never>?
+
     init(urls: [URL], outputDirectory: URL) {
         self.jobs = urls.map { Job(sourceURL: $0) }
         self.outputDirectory = outputDirectory
@@ -38,8 +40,19 @@ final class MultiConversionModel: ObservableObject {
         }
     }
 
+    /// Starts the batch. Returns the task so tests can await it.
+    @discardableResult
+    func start(options: PDFOptions, format: OutputFormat, historyStore: HistoryStore) -> Task<Void, Never> {
+        let task = Task { await run(options: options, format: format, historyStore: historyStore) }
+        runTask = task
+        return task
+    }
+
+    /// Stops the file that is converting now (the engine sees the task
+    /// cancellation) and every file still waiting.
     func cancelAll() {
         isCancelled = true
+        runTask?.cancel()
     }
 
     func run(options: PDFOptions, format: OutputFormat, historyStore: HistoryStore) async {
@@ -55,23 +68,26 @@ final class MultiConversionModel: ObservableObject {
             }
 
             let sourceURL = jobs[index].sourceURL
+            let progress = ConversionProgress()
+            jobs[index].status = .converting(fraction: 0, stage: progress.stageText)
+            // Mirrors `progress` into the job row. Must stop on every exit
+            // path: if it outlived a failed conversion it would overwrite
+            // `.failed` with `.converting` again, and the batch would never
+            // finish.
+            let watcher = Task { @MainActor [weak self] in
+                while !Task.isCancelled {
+                    self?.jobs[index].status = .converting(fraction: progress.fraction, stage: progress.stageText)
+                    try? await Task.sleep(nanoseconds: 150_000_000)
+                }
+            }
+            defer { watcher.cancel() }
+
             do {
-                let book = try KindleNormalizer.parse(fileAt: sourceURL)
+                let book = try await BookLoader.load(sourceURL)
                 let outputURL = nextAvailableURL(
                     directory: outputDirectory, baseName: sanitizedFilename(book.title),
                     extension: format.fileExtension)
-                let progress = ConversionProgress()
-                jobs[index].status = .converting(fraction: 0, stage: progress.stageText)
-
-                let watcher = Task { @MainActor [weak self] in
-                    while !Task.isCancelled {
-                        self?.jobs[index].status = .converting(fraction: progress.fraction, stage: progress.stageText)
-                        try? await Task.sleep(nanoseconds: 150_000_000)
-                    }
-                }
-
                 let resultURL = try await convert(book: book, options: options, outputURL: outputURL, progress: progress)
-                watcher.cancel()
 
                 jobs[index].status = .done(resultURL)
                 historyStore.add(
@@ -80,7 +96,8 @@ final class MultiConversionModel: ObservableObject {
                         conversionLabel: "\(book.sourceURL.pathExtension.uppercased()) → \(format.rawValue)",
                         outputPath: resultURL.path, sourcePath: sourceURL.path))
             } catch {
-                jobs[index].status = .failed(error.localizedDescription)
+                let cancelled = isCancelled || error is CancellationError
+                jobs[index].status = .failed(cancelled ? "Cancelled" : error.localizedDescription)
             }
         }
     }

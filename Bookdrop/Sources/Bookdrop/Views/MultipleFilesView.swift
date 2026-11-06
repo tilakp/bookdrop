@@ -149,7 +149,7 @@ struct MultipleFilesView: View {
                     .buttonStyle(.bordered)
             } else {
                 Button("Convert All") {
-                    Task { await model.run(options: options, format: format, historyStore: historyStore) }
+                    model.start(options: options, format: format, historyStore: historyStore)
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(Color.brandPurple)

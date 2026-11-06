@@ -7,7 +7,7 @@ struct FileLoadedView: View {
     @Binding var options: PDFOptions
     @Binding var format: OutputFormat
     @Binding var outputDirectory: URL
-    @ObservedObject var settingsStore: SettingsStore
+    @Binding var needsOutputDirectoryPrompt: Bool
     var onBack: () -> Void
     var onConvert: () -> Void
     var onSettings: () -> Void
@@ -37,9 +37,10 @@ struct FileLoadedView: View {
         }
         .background(Color(nsColor: .windowBackgroundColor))
         .onAppear {
-            // "Ask every time" means don't silently default the save location —
-            // prompt for it as soon as the book loads.
-            if settingsStore.defaultOutputLocation == .askEveryTime {
+            // "Ask every time": ask once per loaded book, not each time
+            // this screen appears again.
+            if needsOutputDirectoryPrompt {
+                needsOutputDirectoryPrompt = false
                 chooseOutputDirectory()
             }
         }

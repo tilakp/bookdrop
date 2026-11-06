@@ -2,6 +2,7 @@ import Foundation
 
 enum AppScreen {
     case empty
+    case loading(filename: String)
     case loaded(Book)
     case duplicateConfirm(book: Book, filename: String)
     case converting(book: Book, progress: ConversionProgress)

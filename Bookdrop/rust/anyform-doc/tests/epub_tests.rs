@@ -3,9 +3,8 @@ use std::path::PathBuf;
 use anyform_core::{InputPlugin, Options, StdLog};
 use anyform_doc::EpubInput;
 
-/// Same fixture as `Bookdrop/Tests/BookdropTests/EpubParserTests.swift` —
-/// these tests assert the same behavior as that file, so the Rust parser
-/// has a known-good behavioral target from day one (see plan Phase 1).
+/// Same fixture as the Swift `BookLoaderTests`, which check the same book
+/// through the FFI boundary.
 fn fixture_path() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/minimal.epub")
 }

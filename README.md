@@ -75,7 +75,10 @@ limits of PDF input, and the roadmap.
 
 ## Building from source
 
-Needs Xcode's command-line tools and a Rust toolchain ([rustup](https://rustup.rs)):
+Needs full Xcode (the Command Line Tools alone have no SwiftUI macro plugin and no
+`xcodebuild`) and a Rust toolchain ([rustup](https://rustup.rs)). If `xcode-select` points at the
+Command Line Tools, prefix the commands below with
+`DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer`:
 
 ```sh
 git clone https://github.com/tilakp/bookdrop.git
@@ -88,7 +91,7 @@ swift build
 swift test
 ```
 
-44 Swift tests plus 99 Rust tests. Most of the PDF-related ones render through the real bundled
+44 Swift tests plus 116 Rust tests. Most of the PDF-related ones render through the real bundled
 Chromium binary (or read through the real bundled PDF reader) rather than mocking it, so expect
 the suite to take about 30 seconds.
 

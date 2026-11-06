@@ -135,8 +135,47 @@ final class MultiConversionModelTests: XCTestCase {
         // round-trip property anyform-doc's own epub_output_tests.rs
         // verifies at the Rust level, checked here end to end through the
         // real Swift/FFI boundary too.
-        let regenerated = try EpubParser.parse(fileAt: url)
+        let regenerated = try await BookLoader.load(url)
         XCTAssertEqual(regenerated.title, "Minimal Fixture Book")
         XCTAssertEqual(regenerated.chapterCount, 2)
+    }
+
+    /// The progress watcher used to keep running after a failed file and
+    /// set its row back to "converting" every 150 ms, so the batch never
+    /// finished.
+    func testFailedJobStaysFailedAndTheBatchFinishes() async throws {
+        let outputDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("MultiConversionModelTests-\(UUID().uuidString)")
+        let history = HistoryStore(directory: outputDir.appendingPathComponent("history"))
+        let broken = FileManager.default.temporaryDirectory.appendingPathComponent("broken-\(UUID().uuidString).epub")
+        try "not a zip".write(to: broken, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: broken) }
+
+        let model = MultiConversionModel(urls: [broken, fixtureURL()], outputDirectory: outputDir)
+        await model.run(options: PDFOptions(), format: .txt, historyStore: history)
+        try await Task.sleep(nanoseconds: 400_000_000)
+
+        guard case .failed = model.jobs[0].status else {
+            return XCTFail("expected the broken file to stay failed, got \(model.jobs[0].status)")
+        }
+        XCTAssertEqual(model.completedCount, 1)
+        XCTAssertTrue(model.isFinished)
+    }
+
+    func testCancelAllStopsTheFileThatIsConverting() async throws {
+        let outputDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("MultiConversionModelTests-\(UUID().uuidString)")
+        let history = HistoryStore(directory: outputDir.appendingPathComponent("history"))
+        let model = MultiConversionModel(urls: [fixtureURL(), fixtureURL()], outputDirectory: outputDir)
+
+        let task = model.start(options: PDFOptions(), format: .pdf, historyStore: history)
+        while case .waiting = model.jobs[0].status { await Task.yield() }
+        model.cancelAll()
+        await task.value
+
+        for job in model.jobs {
+            XCTAssertEqual(job.status, .failed("Cancelled"))
+        }
+        XCTAssertTrue(model.isFinished)
     }
 }

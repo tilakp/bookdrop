@@ -96,15 +96,6 @@ struct SettingsView: View {
                 Text("Temporary files").font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
                 Button("Clear Temporary Files") { settings.clearTemporaryFiles() }
             }
-
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Logs").font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
-                Button("Open Logs Folder") {
-                    try? FileManager.default.createDirectory(
-                        at: settings.logsDirectory, withIntermediateDirectories: true)
-                    NSWorkspace.shared.open(settings.logsDirectory)
-                }
-            }
         }
     }
 

@@ -9,8 +9,16 @@ import PDFKit
 final class AppCoordinator: ObservableObject {
     @Published var screen: AppScreen = .empty
     @Published var pdfOptions = PDFOptions()
-    @Published var outputFormat: OutputFormat = .pdf
+    @Published var outputFormat: OutputFormat = .pdf {
+        didSet {
+            if settingsStore.rememberLastOutputFormat { settingsStore.lastOutputFormat = outputFormat }
+        }
+    }
     @Published var outputDirectory: URL
+    /// Set when a new book loads with "Ask every time" on. The loaded screen
+    /// asks for a folder once, then clears it, so returning to that screen
+    /// (after Cancel, for example) does not ask again.
+    @Published var needsOutputDirectoryPrompt = false
 
     let historyStore: HistoryStore
     let settingsStore: SettingsStore
@@ -25,6 +33,9 @@ final class AppCoordinator: ObservableObject {
         self.historyStore = historyStore
         self.settingsStore = settingsStore
         self.outputDirectory = Self.defaultOutputDirectory(for: settingsStore.defaultOutputLocation)
+        if settingsStore.rememberLastOutputFormat, let last = settingsStore.lastOutputFormat {
+            self.outputFormat = last
+        }
     }
 
     static func defaultOutputDirectory(for location: DefaultOutputLocation, sourceURL: URL? = nil) -> URL {
@@ -39,36 +50,42 @@ final class AppCoordinator: ObservableObject {
         }
     }
 
-    func handleFilesSelected(_ urls: [URL]) {
-        guard urls.count > 1 else {
-            if let url = urls.first { handleSingleFile(url) }
-            return
+    /// Returns the loading task for a single file (tests await it), or nil
+    /// when nothing needs loading.
+    @discardableResult
+    func handleFilesSelected(_ urls: [URL]) -> Task<Void, Never>? {
+        let supported = urls.filter(BookLoader.isSupported)
+        guard !supported.isEmpty else {
+            if let first = urls.first {
+                let error = BookLoadError.unsupportedFormat(first.pathExtension.lowercased())
+                screen = .error(
+                    message: error.errorDescription ?? "Bookdrop can't open this file.",
+                    hint: "Bookdrop opens EPUB, Kindle (AZW3, AZW, KFX, MOBI) and PDF files.",
+                    technicalDetails: nil)
+            }
+            return nil
         }
-        let model = MultiConversionModel(urls: urls, outputDirectory: outputDirectory)
-        screen = .multipleFiles(model)
+        guard supported.count > 1 else { return loadSingleFile(supported[0]) }
+        screen = .multipleFiles(MultiConversionModel(urls: supported, outputDirectory: outputDirectory))
+        return nil
     }
 
-    func handleSingleFile(_ url: URL) {
-        do {
-            let book = try KindleNormalizer.parse(fileAt: url)
-            pdfOptions.preserveEpubStyling = settingsStore.preserveOriginalStylingByDefault
-            outputDirectory = Self.defaultOutputDirectory(
-                for: settingsStore.defaultOutputLocation, sourceURL: url)
-            screen = .loaded(book)
-        } catch let error as EpubParserError {
-            screen = .error(
-                message: error.errorDescription ?? "This EPUB couldn't be read.",
-                hint: "Try another file, or choose a different output format.",
-                technicalDetails: String(describing: error))
-        } catch let error as KindleNormalizerError {
-            screen = .error(
-                message: error.errorDescription ?? "This Kindle file couldn't be read.",
-                hint: "Try another file, or choose a different output format.",
-                technicalDetails: String(describing: error))
-        } catch {
-            screen = .error(
-                message: "This file couldn't be read.", hint: nil,
-                technicalDetails: String(describing: error))
+    private func loadSingleFile(_ url: URL) -> Task<Void, Never> {
+        screen = .loading(filename: url.lastPathComponent)
+        return Task {
+            do {
+                let book = try await BookLoader.load(url)
+                pdfOptions.preserveEpubStyling = settingsStore.preserveOriginalStylingByDefault
+                outputDirectory = Self.defaultOutputDirectory(
+                    for: settingsStore.defaultOutputLocation, sourceURL: url)
+                needsOutputDirectoryPrompt = settingsStore.defaultOutputLocation == .askEveryTime
+                screen = .loaded(book)
+            } catch {
+                screen = .error(
+                    message: error.localizedDescription,
+                    hint: "Try another file.",
+                    technicalDetails: String(describing: error))
+            }
         }
     }
 
@@ -153,7 +170,8 @@ final class AppCoordinator: ObservableObject {
 
             if performSideEffects {
                 if settingsStore.showNotification {
-                    NotificationService.notifyConversionComplete(bookTitle: book.title, outputURL: resultURL)
+                    NotificationService.notifyConversionComplete(
+                        bookTitle: book.title, format: outputFormat, outputURL: resultURL)
                 }
                 if settingsStore.revealInFinder {
                     NSWorkspace.shared.activateFileViewerSelecting([resultURL])

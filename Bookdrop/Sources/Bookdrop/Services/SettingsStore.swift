@@ -33,9 +33,9 @@ final class SettingsStore: ObservableObject {
     @Published var openConvertedFile: Bool { didSet { save() } }
     @Published var showNotification: Bool { didSet { save() } }
     @Published var revealInFinder: Bool { didSet { save() } }
-    /// No effect yet: PDF is the only output format in v1, so there's nothing to
-    /// "remember" — revisit once v1.1 adds more output formats.
     @Published var rememberLastOutputFormat: Bool { didSet { save() } }
+    /// Read only when `rememberLastOutputFormat` is on.
+    @Published var lastOutputFormat: OutputFormat? { didSet { save() } }
     @Published var preserveOriginalStylingByDefault: Bool { didSet { save() } }
 
     private static let key = "Bookdrop.Settings"
@@ -53,6 +53,7 @@ final class SettingsStore: ObservableObject {
             showNotification = stored.showNotification
             revealInFinder = stored.revealInFinder
             rememberLastOutputFormat = stored.rememberLastOutputFormat
+            lastOutputFormat = stored.lastOutputFormat.flatMap(OutputFormat.init(rawValue:))
             preserveOriginalStylingByDefault = stored.preserveOriginalStylingByDefault
         } else {
             defaultOutputLocation = .downloads
@@ -60,6 +61,7 @@ final class SettingsStore: ObservableObject {
             showNotification = true
             revealInFinder = false
             rememberLastOutputFormat = true
+            lastOutputFormat = nil
             preserveOriginalStylingByDefault = true
         }
     }
@@ -69,16 +71,12 @@ final class SettingsStore: ObservableObject {
         try? FileManager.default.removeItem(at: tempDir)
     }
 
-    var logsDirectory: URL {
-        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("Bookdrop/Logs", isDirectory: true)
-    }
-
     private func save() {
         let stored = StoredSettings(
             defaultOutputLocation: defaultOutputLocation, openConvertedFile: openConvertedFile,
             showNotification: showNotification, revealInFinder: revealInFinder,
             rememberLastOutputFormat: rememberLastOutputFormat,
+            lastOutputFormat: lastOutputFormat?.rawValue,
             preserveOriginalStylingByDefault: preserveOriginalStylingByDefault)
         if let data = try? JSONEncoder().encode(stored) {
             defaults.set(data, forKey: Self.key)
@@ -91,6 +89,8 @@ final class SettingsStore: ObservableObject {
         var showNotification: Bool
         var revealInFinder: Bool
         var rememberLastOutputFormat: Bool
+        /// Optional so settings saved by older versions still decode.
+        var lastOutputFormat: String?
         var preserveOriginalStylingByDefault: Bool
     }
 }

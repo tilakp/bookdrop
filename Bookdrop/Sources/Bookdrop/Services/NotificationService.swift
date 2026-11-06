@@ -16,11 +16,11 @@ enum NotificationService {
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
     }
 
-    static func notifyConversionComplete(bookTitle: String, outputURL: URL) {
+    static func notifyConversionComplete(bookTitle: String, format: OutputFormat, outputURL: URL) {
         guard isNotificationCenterAvailable else { return }
         let content = UNMutableNotificationContent()
         content.title = "Bookdrop"
-        content.body = "\(bookTitle) has been converted to PDF."
+        content.body = "\(bookTitle) has been converted to \(format.rawValue)."
         content.userInfo = ["outputPath": outputURL.path]
         let request = UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)
         UNUserNotificationCenter.current().add(request) { _ in }
