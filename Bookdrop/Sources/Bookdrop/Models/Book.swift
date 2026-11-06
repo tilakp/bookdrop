@@ -8,6 +8,8 @@ struct Book {
     var spine: [SpineItem]
     var toc: [TocNode]
     var sourceURL: URL
+    /// The engine's parsed copy, which conversions reuse.
+    let engineBook: EngineBook
 
     var chapterCount: Int { spine.count }
 

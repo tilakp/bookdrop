@@ -9,13 +9,13 @@
 use std::ffi::{c_char, c_void, CStr, CString};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use anyform_core::{Log, Options, Value};
 use anyform_doc::{DocumentIR, TocNode};
 use serde::Serialize;
 
-/// Opaque cancellation handle for an in-flight `anyform_convert_start` call.
+/// Opaque cancellation handle for an in-flight `anyform_convert_book_start` call.
 pub struct AnyformCancelToken {
     cancelled: Arc<AtomicBool>,
 }
@@ -53,7 +53,7 @@ impl Log for FfiLog {
     }
 }
 
-// ---- Book-info JSON (for `anyform_parse_book`) ----
+// ---- Book-info JSON (for `anyform_open_book`) ----
 
 #[derive(Serialize)]
 struct SpineItemWire {
@@ -142,51 +142,78 @@ enum ErrorResult {
     Error(WireError),
 }
 
-/// Parses any registered input format (EPUB, Kindle, PDF) and returns
+/// A parsed book, opened once and reused by every conversion of it, so a
+/// Kindle file runs boko once and a PDF is read by pdfium once. The mutex
+/// serializes conversions of one book: `PdfOutput` edits chapter files in
+/// place while it renders. The `Arc` keeps the book alive for a running
+/// conversion even if the host frees its handle first.
+pub struct AnyformBook {
+    ir: Arc<Mutex<DocumentIR>>,
+}
+
+/// Opens any registered input format (EPUB, Kindle, PDF). Returns
 /// `{"status":"ok","book":{...}}` or
-/// `{"status":"error","code":"...","message":"..."}`.
-/// Caller must free the returned pointer with `anyform_free_string`.
+/// `{"status":"error","code":"...","message":"..."}`; the caller frees it
+/// with `anyform_free_string`. On success `*out_book` is set to a handle
+/// the caller frees with `anyform_free_book`; on error it is set to null.
 ///
-/// `options_json` may be null; it carries the same tool paths
-/// (`boko_path`, `pdfium_path`) as `anyform_convert_start`.
+/// `options_json` may be null. It carries the tool paths (`boko_path`,
+/// `pdfium_path`) that reading needs.
 ///
 /// # Safety
 /// `path` must be a valid, NUL-terminated UTF-8 C string. `options_json`
-/// must be null or a valid, NUL-terminated UTF-8 C string.
+/// must be null or a valid, NUL-terminated UTF-8 C string. `out_book` must
+/// be a valid pointer to write to.
 #[no_mangle]
-pub unsafe extern "C" fn anyform_parse_book(path: *const c_char, options_json: *const c_char) -> *mut c_char {
-    let result: Result<BookInfo, WireError> = catch_panic(|| {
+pub unsafe extern "C" fn anyform_open_book(
+    path: *const c_char,
+    options_json: *const c_char,
+    out_book: *mut *mut AnyformBook,
+) -> *mut c_char {
+    let result: Result<DocumentIR, WireError> = catch_panic(|| {
         let path = c_str_to_pathbuf(path).map_err(WireError::invalid_argument)?;
         let opts = options_from_json(options_json).map_err(WireError::invalid_argument)?;
-        let registry = anyform_doc::document_registry();
-        let ir = registry.parse(&path, &opts, &anyform_core::StdLog)?;
-        Ok(BookInfo::from(&ir))
+        Ok(anyform_doc::document_registry().parse(&path, &opts, &anyform_core::StdLog)?)
     });
 
-    let payload = match result {
-        Ok(book) => serde_json::to_string(&ParseResult::Ok { book }),
-        Err(error) => serde_json::to_string(&ParseResult::Error(error)),
+    let (payload, book) = match result {
+        Ok(ir) => {
+            let payload = serde_json::to_string(&ParseResult::Ok { book: BookInfo::from(&ir) });
+            (payload, Box::into_raw(Box::new(AnyformBook { ir: Arc::new(Mutex::new(ir)) })))
+        }
+        Err(error) => (serde_json::to_string(&ParseResult::Error(error)), std::ptr::null_mut()),
+    };
+    if !out_book.is_null() {
+        *out_book = book;
     }
-    .unwrap_or_else(|_| INTERNAL_ERROR_JSON.into());
-
-    string_to_c(payload)
+    string_to_c(payload.unwrap_or_else(|_| INTERNAL_ERROR_JSON.into()))
 }
 
-/// Starts an async conversion on a background thread. `on_progress` may be
+/// # Safety
+/// `book` must be null or a pointer from `anyform_open_book` that has not
+/// been freed, and must not be used again afterward.
+#[no_mangle]
+pub unsafe extern "C" fn anyform_free_book(book: *mut AnyformBook) {
+    if !book.is_null() {
+        drop(Box::from_raw(book));
+    }
+}
+
+/// Starts converting `book` to `output_path` on a background thread. The
+/// output format comes from the path's extension. `on_progress` may be
 /// called zero or more times before `on_complete` fires exactly once.
-/// Returns an owned `AnyformCancelToken*` the caller must eventually free
-/// with `anyform_free_cancel_token` (after `on_complete` has fired, or
-/// after cancelling).
+/// Returns an owned `AnyformCancelToken*` the caller must free with
+/// `anyform_free_cancel_token` after `on_complete` has fired.
 ///
 /// # Safety
-/// `input_path`/`output_path`/`options_json` must be valid NUL-terminated
-/// UTF-8 C strings. `progress_ctx`/`complete_ctx` are passed back verbatim
-/// to the callbacks on whatever thread the conversion runs on — the caller
-/// must ensure they stay valid and are safe to use from that thread until
-/// `on_complete` fires.
+/// `book` must be a live pointer from `anyform_open_book`.
+/// `output_path`/`options_json` must be valid NUL-terminated UTF-8 C
+/// strings. `progress_ctx`/`complete_ctx` are passed back verbatim to the
+/// callbacks on the conversion thread: the caller must keep them valid,
+/// and safe to use from that thread, until `on_complete` fires.
 #[no_mangle]
-pub unsafe extern "C" fn anyform_convert_start(
-    input_path: *const c_char,
+pub unsafe extern "C" fn anyform_convert_book_start(
+    book: *const AnyformBook,
     output_path: *const c_char,
     options_json: *const c_char,
     on_progress: Option<extern "C" fn(fraction: f64, stage: *const c_char, ctx: *mut c_void)>,
@@ -195,18 +222,16 @@ pub unsafe extern "C" fn anyform_convert_start(
     complete_ctx: *mut c_void,
 ) -> *mut AnyformCancelToken {
     let cancelled = Arc::new(AtomicBool::new(false));
-    let token = Box::into_raw(Box::new(AnyformCancelToken {
-        cancelled: cancelled.clone(),
-    }));
+    let token = Box::into_raw(Box::new(AnyformCancelToken { cancelled: cancelled.clone() }));
 
-    let setup: Result<(PathBuf, PathBuf, Options), String> = (|| {
-        let input = c_str_to_pathbuf(input_path)?;
+    let setup: Result<(Arc<Mutex<DocumentIR>>, PathBuf, Options), String> = (|| {
+        let ir = book.as_ref().map(|b| b.ir.clone()).ok_or("null book")?;
         let output = c_str_to_pathbuf(output_path)?;
         let opts = options_from_json(options_json)?;
-        Ok((input, output, opts))
+        Ok((ir, output, opts))
     })();
 
-    let (input, output, opts) = match setup {
+    let (ir, output, opts) = match setup {
         Ok(v) => v,
         Err(message) => {
             complete_with_error(on_complete, complete_ctx, WireError::invalid_argument(message));
@@ -218,14 +243,12 @@ pub unsafe extern "C" fn anyform_convert_start(
     let complete_ctx_addr = complete_ctx as usize;
 
     std::thread::spawn(move || {
-        let log = FfiLog {
-            cancelled,
-            on_progress,
-            progress_ctx: progress_ctx_addr,
-        };
+        let log = FfiLog { cancelled, on_progress, progress_ctx: progress_ctx_addr };
         let result = catch_panic(|| {
-            let registry = anyform_doc::document_registry();
-            Ok(registry.convert(&input, &output, &opts, &log)?)
+            // A poisoned lock means an earlier conversion panicked. The IR
+            // itself is still usable: each conversion reads it afresh.
+            let ir = ir.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+            Ok(anyform_doc::document_registry().write(&ir, &output, &opts, &log)?)
         });
 
         // `on_complete` must fire exactly once whatever happened above: the
@@ -266,7 +289,7 @@ fn c_string_lossy(s: String) -> CString {
 }
 
 /// # Safety
-/// `token` must be a pointer returned by `anyform_convert_start` that has
+/// `token` must be a pointer returned by `anyform_convert_book_start` that has
 /// not yet been freed.
 #[no_mangle]
 pub unsafe extern "C" fn anyform_cancel(token: *mut AnyformCancelToken) {
@@ -277,7 +300,7 @@ pub unsafe extern "C" fn anyform_cancel(token: *mut AnyformCancelToken) {
 }
 
 /// # Safety
-/// `token` must be a pointer returned by `anyform_convert_start`, not
+/// `token` must be a pointer returned by `anyform_convert_book_start`, not
 /// already freed, and not used again afterward.
 #[no_mangle]
 pub unsafe extern "C" fn anyform_free_cancel_token(token: *mut AnyformCancelToken) {
@@ -349,11 +372,18 @@ mod tests {
     use super::*;
 
     fn parse(path: &str) -> serde_json::Value {
+        let (json, book) = open(path);
+        unsafe { anyform_free_book(book) };
+        json
+    }
+
+    fn open(path: &str) -> (serde_json::Value, *mut AnyformBook) {
         let path = CString::new(path).unwrap();
-        let raw = unsafe { anyform_parse_book(path.as_ptr(), std::ptr::null()) };
+        let mut book = std::ptr::null_mut();
+        let raw = unsafe { anyform_open_book(path.as_ptr(), std::ptr::null(), &mut book) };
         let json = unsafe { CStr::from_ptr(raw) }.to_str().unwrap().to_string();
         unsafe { anyform_free_string(raw) };
-        serde_json::from_str(&json).unwrap()
+        (serde_json::from_str(&json).unwrap(), book)
     }
 
     #[test]
@@ -373,5 +403,34 @@ mod tests {
         let book = parse(concat!(env!("CARGO_MANIFEST_DIR"), "/../anyform-doc/tests/fixtures/minimal.epub"));
         assert_eq!(book["status"], "ok");
         assert_eq!(book["book"]["title"], "Minimal Fixture Book");
+    }
+
+    extern "C" fn record_completion(success: i32, _error: *const c_char, ctx: *mut c_void) {
+        let tx = unsafe { &*(ctx as *const std::sync::mpsc::Sender<i32>) };
+        tx.send(success).unwrap();
+    }
+
+    #[test]
+    fn one_opened_book_converts_more_than_once_and_outlives_its_handle() {
+        let (json, book) = open(concat!(env!("CARGO_MANIFEST_DIR"), "/../anyform-doc/tests/fixtures/minimal.epub"));
+        assert_eq!(json["status"], "ok");
+        assert!(!book.is_null());
+        let (tx, rx) = std::sync::mpsc::channel::<i32>();
+        let ctx = &tx as *const _ as *mut c_void;
+        let dir = std::env::temp_dir().join(format!("anyform-ffi-handle-{}", std::process::id()));
+        for (i, ext) in ["txt", "html"].iter().enumerate() {
+            let out = CString::new(dir.join(format!("out.{ext}")).to_str().unwrap()).unwrap();
+            let token = unsafe {
+                anyform_convert_book_start(book, out.as_ptr(), std::ptr::null(), None, std::ptr::null_mut(), Some(record_completion), ctx)
+            };
+            if i == 1 {
+                // Freeing the handle while a conversion runs must be safe.
+                unsafe { anyform_free_book(book) };
+            }
+            assert_eq!(rx.recv().unwrap(), 1, "conversion to {ext} should succeed");
+            unsafe { anyform_free_cancel_token(token) };
+            assert!(dir.join(format!("out.{ext}")).exists());
+        }
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

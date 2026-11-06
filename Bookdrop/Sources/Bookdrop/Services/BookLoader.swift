@@ -39,14 +39,18 @@ enum BookLoader {
     private static func parse(_ url: URL) throws -> Book {
         let optionsJSON = (try? JSONSerialization.data(withJSONObject: BundledTools.engineOptions))
             .flatMap { String(data: $0, encoding: .utf8) } ?? "{}"
+        var handle: OpaquePointer?
         let result = url.path.withCString { path in
-            optionsJSON.withCString { options in anyform_parse_book(path, options) }
+            optionsJSON.withCString { options in anyform_open_book(path, options, &handle) }
         }
+        // Owning the handle first means it is freed on every error path below.
+        let engineBook = handle.map(EngineBook.init)
         guard let result else { throw EngineError.decode(nil) }
         defer { anyform_free_string(result) }
 
         let json = String(cString: result)
-        guard let parsed = try? JSONDecoder().decode(ParseResult.self, from: Data(json.utf8)),
+        guard let engineBook,
+            let parsed = try? JSONDecoder().decode(ParseResult.self, from: Data(json.utf8)),
             parsed.status == "ok", let info = parsed.book
         else { throw EngineError.decode(json) }
         return Book(
@@ -56,7 +60,24 @@ enum BookLoader {
             fileSizeBytes: info.fileSizeBytes,
             spine: info.spine.map { SpineItem(id: $0.id, href: $0.href) },
             toc: info.toc.map(TocNode.init),
-            sourceURL: url)
+            sourceURL: url,
+            engineBook: engineBook)
+    }
+}
+
+/// Owns an `AnyformBook*` from `anyform_open_book`: the engine's parsed
+/// copy of one book, with its extracted files. Freed when the last `Book`
+/// value that holds it goes away. A conversion that is still running keeps
+/// its own reference on the Rust side, so freeing early is safe.
+final class EngineBook: @unchecked Sendable {
+    let pointer: OpaquePointer
+
+    fileprivate init(_ pointer: OpaquePointer) {
+        self.pointer = pointer
+    }
+
+    deinit {
+        anyform_free_book(pointer)
     }
 }
 

@@ -180,35 +180,39 @@ impl<IR> Registry<IR> {
         plugin.convert(input, opts, log)
     }
 
-    pub fn convert(
-        &self,
-        input: &Path,
-        output: &Path,
-        opts: &Options,
-        log: &dyn Log,
-    ) -> Result<(), ConvError> {
-        let out_ext = ext_of(output)?;
-        let out_plugin = self
-            .outputs
-            .get(out_ext.as_str())
-            .ok_or_else(|| ConvError::NoOutputPlugin(out_ext.clone()))?;
-
+    /// Parses `input` and writes it to `output`. Both plugins are picked by
+    /// file extension. The output plugin is checked first, so an
+    /// unsupported output format fails before any parsing work.
+    pub fn convert(&self, input: &Path, output: &Path, opts: &Options, log: &dyn Log) -> Result<(), ConvError> {
+        self.output_plugin(output)?;
         let ir = self.parse(input, opts, log)?;
+        self.write(&ir, output, opts, log)
+    }
 
-        // Plugins write to a temp file next to `output`, which is renamed
-        // into place only on success. A failed or cancelled conversion then
-        // never leaves a broken file, and never destroys a file it replaces.
+    /// Writes an already parsed document to `output`, with the output
+    /// plugin for its extension. The plugin writes to a temp file next to
+    /// `output`, which is renamed into place only on success: a failed or
+    /// cancelled conversion never leaves a broken file, and never destroys
+    /// the file it was to replace.
+    pub fn write(&self, ir: &IR, output: &Path, opts: &Options, log: &dyn Log) -> Result<(), ConvError> {
+        let (plugin, ext) = self.output_plugin(output)?;
         let parent = output.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new("."));
         std::fs::create_dir_all(parent)?;
         let staging = tempfile::Builder::new()
             .prefix(".bookdrop-")
-            .suffix(&format!(".{out_ext}"))
+            .suffix(&format!(".{ext}"))
             .tempfile_in(parent)?
             .into_temp_path();
-        out_plugin.convert(&ir, &staging, opts, log)?;
+        plugin.convert(ir, &staging, opts, log)?;
         set_default_file_mode(&staging)?;
         staging.persist(output).map_err(|e| ConvError::Io(e.error))?;
         Ok(())
+    }
+
+    fn output_plugin(&self, output: &Path) -> Result<(&Arc<dyn OutputPlugin<IR>>, String), ConvError> {
+        let ext = ext_of(output)?;
+        let plugin = self.outputs.get(ext.as_str()).ok_or_else(|| ConvError::NoOutputPlugin(ext.clone()))?;
+        Ok((plugin, ext))
     }
 }
 

@@ -31,7 +31,7 @@ private final class ConversionContext: @unchecked Sendable {
         lock.unlock()
         // Cancellation may have already been requested before the token
         // existed (the task can be cancelled the instant it's created,
-        // before `anyform_convert_start` returns) — apply it now instead
+        // before `anyform_convert_book_start` returns) — apply it now instead
         // of silently dropping it.
         if cancelPending, let token {
             anyform_cancel(token)
@@ -99,7 +99,7 @@ private func rustCompleteCallback(
     context.complete(success: success == 1, errorJSON: errorJSON.map { String(cString: $0) })
 }
 
-/// Builds the JSON `anyform_convert_start` reads its render options from —
+/// Builds the JSON `anyform_convert_book_start` reads its render options from —
 /// mirrors every field of `PDFOptions` (`Sources/Bookdrop/Models/PDFOptions.swift`)
 /// so nothing in the Advanced Options UI is silently ignored by the Rust
 /// engine for the `.pdf` path. `PDFOptions.pageDimensions`/`.margins.points`
@@ -143,9 +143,10 @@ private func conversionOptionsJSON(pdfOptions: PDFOptions) -> String {
 }
 
 /// Runs one conversion in the Rust `anyform` engine through the
-/// `anyform-ffi` C ABI. Only the source and output paths cross the boundary:
-/// the engine parses the source again and picks the input and output
-/// plugins from the two file extensions, so no format needs Swift code.
+/// `anyform-ffi` C ABI. It converts the engine's own parsed copy of the
+/// book (`Book.engineBook`), so the source is not read again. The engine
+/// picks the output plugin from the output file's extension, so no format
+/// needs Swift code.
 @MainActor
 enum RustConversionEngine {
     static func convert(
@@ -157,14 +158,12 @@ enum RustConversionEngine {
         try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
                 context.setContinuation(continuation)
-                let token = book.sourceURL.path.withCString { inputPath in
-                    outputURL.path.withCString { outputPath in
-                        conversionOptionsJSON(pdfOptions: options).withCString { optionsJSON in
-                            anyform_convert_start(
-                                inputPath, outputPath, optionsJSON,
-                                rustProgressCallback, ctxPtr,
-                                rustCompleteCallback, ctxPtr)
-                        }
+                let token = outputURL.path.withCString { outputPath in
+                    conversionOptionsJSON(pdfOptions: options).withCString { optionsJSON in
+                        anyform_convert_book_start(
+                            book.engineBook.pointer, outputPath, optionsJSON,
+                            rustProgressCallback, ctxPtr,
+                            rustCompleteCallback, ctxPtr)
                     }
                 }
                 context.setToken(token)

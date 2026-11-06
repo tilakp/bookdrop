@@ -14,65 +14,80 @@
 #include <stdint.h>
 
 /**
- * Opaque cancellation handle for an in-flight `anyform_convert_start` call.
+ * A parsed book, opened once and reused by every conversion of it, so a
+ * Kindle file runs boko once and a PDF is read by pdfium once. The mutex
+ * serializes conversions of one book: `PdfOutput` edits chapter files in
+ * place while it renders. The `Arc` keeps the book alive for a running
+ * conversion even if the host frees its handle first.
+ */
+typedef struct AnyformBook AnyformBook;
+
+/**
+ * Opaque cancellation handle for an in-flight `anyform_convert_book_start` call.
  */
 typedef struct AnyformCancelToken AnyformCancelToken;
 
 /**
- * Parses any registered input format — EPUB, Kindle-family, or PDF, not
- * just EPUB despite the name this replaced (`anyform_parse_epub`; it was
- * never actually EPUB-specific, since `registry.parse` dispatches by the
- * input path's extension the same way `registry.convert` does) — and
- * returns Book-info JSON (`{"status":"ok","book":{...}}` or
- * `{"status":"error","message":"..."}`) for the UI's file-loaded panel.
- * Caller must free the returned pointer with `anyform_free_string`.
+ * Opens any registered input format (EPUB, Kindle, PDF). Returns
+ * `{"status":"ok","book":{...}}` or
+ * `{"status":"error","code":"...","message":"..."}`; the caller frees it
+ * with `anyform_free_string`. On success `*out_book` is set to a handle
+ * the caller frees with `anyform_free_book`; on error it is set to null.
  *
- * `options_json` may be null; it carries the same tool paths
- * (`boko_path`, `pdfium_path`) as `anyform_convert_start`.
+ * `options_json` may be null. It carries the tool paths (`boko_path`,
+ * `pdfium_path`) that reading needs.
  *
  * # Safety
  * `path` must be a valid, NUL-terminated UTF-8 C string. `options_json`
- * must be null or a valid, NUL-terminated UTF-8 C string.
+ * must be null or a valid, NUL-terminated UTF-8 C string. `out_book` must
+ * be a valid pointer to write to.
  */
- char *anyform_parse_book(const char *path, const char *options_json);
+ char *anyform_open_book(const char *path, const char *options_json, struct AnyformBook **out_book);
 
 /**
- * Starts an async conversion on a background thread. `on_progress` may be
+ * # Safety
+ * `book` must be null or a pointer from `anyform_open_book` that has not
+ * been freed, and must not be used again afterward.
+ */
+ void anyform_free_book(struct AnyformBook *book);
+
+/**
+ * Starts converting `book` to `output_path` on a background thread. The
+ * output format comes from the path's extension. `on_progress` may be
  * called zero or more times before `on_complete` fires exactly once.
- * Returns an owned `AnyformCancelToken*` the caller must eventually free
- * with `anyform_free_cancel_token` (after `on_complete` has fired, or
- * after cancelling).
+ * Returns an owned `AnyformCancelToken*` the caller must free with
+ * `anyform_free_cancel_token` after `on_complete` has fired.
  *
  * # Safety
- * `input_path`/`output_path`/`options_json` must be valid NUL-terminated
- * UTF-8 C strings. `progress_ctx`/`complete_ctx` are passed back verbatim
- * to the callbacks on whatever thread the conversion runs on — the caller
- * must ensure they stay valid and are safe to use from that thread until
- * `on_complete` fires.
+ * `book` must be a live pointer from `anyform_open_book`.
+ * `output_path`/`options_json` must be valid NUL-terminated UTF-8 C
+ * strings. `progress_ctx`/`complete_ctx` are passed back verbatim to the
+ * callbacks on the conversion thread: the caller must keep them valid,
+ * and safe to use from that thread, until `on_complete` fires.
  */
 
-struct AnyformCancelToken *anyform_convert_start(const char *input_path,
-                                                 const char *output_path,
-                                                 const char *options_json,
-                                                 void (*on_progress)(double fraction,
-                                                                     const char *stage,
-                                                                     void *ctx),
-                                                 void *progress_ctx,
-                                                 void (*on_complete)(int32_t success,
-                                                                     const char *error_json,
-                                                                     void *ctx),
-                                                 void *complete_ctx);
+struct AnyformCancelToken *anyform_convert_book_start(const struct AnyformBook *book,
+                                                      const char *output_path,
+                                                      const char *options_json,
+                                                      void (*on_progress)(double fraction,
+                                                                          const char *stage,
+                                                                          void *ctx),
+                                                      void *progress_ctx,
+                                                      void (*on_complete)(int32_t success,
+                                                                          const char *error_json,
+                                                                          void *ctx),
+                                                      void *complete_ctx);
 
 /**
  * # Safety
- * `token` must be a pointer returned by `anyform_convert_start` that has
+ * `token` must be a pointer returned by `anyform_convert_book_start` that has
  * not yet been freed.
  */
  void anyform_cancel(struct AnyformCancelToken *token);
 
 /**
  * # Safety
- * `token` must be a pointer returned by `anyform_convert_start`, not
+ * `token` must be a pointer returned by `anyform_convert_book_start`, not
  * already freed, and not used again afterward.
  */
  void anyform_free_cancel_token(struct AnyformCancelToken *token);
