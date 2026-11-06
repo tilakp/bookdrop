@@ -75,8 +75,8 @@ limits of PDF input, and the roadmap.
 
 ## Building from source
 
-Needs full Xcode (the Command Line Tools alone have no SwiftUI macro plugin and no
-`xcodebuild`) and a Rust toolchain ([rustup](https://rustup.rs)). If `xcode-select` points at the
+Needs full Xcode (the Command Line Tools alone have no SwiftUI macro plugin, so `swift build`
+fails with them) and a Rust toolchain ([rustup](https://rustup.rs)). If `xcode-select` points at the
 Command Line Tools, prefix the commands below with
 `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer`:
 

@@ -1,11 +1,10 @@
 #!/usr/bin/env bash
-# Builds anyform-ffi for both macOS architectures, lipo's them into a
-# universal static lib, and packages it as an xcframework Package.swift's
-# `.binaryTarget` can link (see plan Phase 3/4). Run this before `swift
-# build`/`swift test` in Bookdrop/ — build-app.sh does this automatically;
-# run it manually after changing anyform-ffi's public surface (and re-run
-# `cbindgen --crate anyform-ffi --output include/anyform.h` in
-# anyform-ffi/ first if the C API itself changed).
+# Builds anyform-ffi for both macOS architectures and lipo's them into the
+# universal static lib that Package.swift links. Run this before `swift
+# build`/`swift test` in Bookdrop/ (build-app.sh does this automatically).
+# If the C API changed, first re-run `cbindgen --crate anyform-ffi --output
+# include/anyform.h` in anyform-ffi/ and copy the header to
+# Sources/CAnyform/include/.
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -20,21 +19,15 @@ lipo -create \
     target/x86_64-apple-darwin/release/libanyform_ffi.a \
     -output target/universal/libanyform_ffi.a
 
-rm -rf target/AnyformFFI.xcframework
-xcodebuild -create-xcframework \
-    -library target/universal/libanyform_ffi.a -headers anyform-ffi/include \
-    -output target/AnyformFFI.xcframework
-
-echo "build-ffi.sh: wrote $ROOT_DIR/target/AnyformFFI.xcframework"
+echo "build-ffi.sh: wrote $ROOT_DIR/target/universal/libanyform_ffi.a"
 
 # SwiftPM links this static lib via raw -L/-l unsafeFlags (see Package.swift),
 # not a tracked target dependency, so it has NO idea the .a file's *content*
 # changed when only its mtime/path stay the same — `swift build`/`swift test`
 # silently skip relinking and keep serving a stale binary that still has
-# whatever Rust bug you just "fixed". Confirmed the hard way: multiple
-# rounds of real Rust fixes never reached the installed .app because of
-# exactly this. Force it: delete every previously-linked Bookdrop
-# executable and test bundle so the next `swift build`/`swift test`/
+# whatever Rust bug you just "fixed" (this happened several times). Force
+# it: delete every previously-linked Bookdrop executable and test bundle
+# so the next `swift build`/`swift test`/
 # `Scripts/build-app.sh` is guaranteed to relink against what was just built.
 #
 # A universal (`swift build --arch arm64 --arch x86_64`, used by
