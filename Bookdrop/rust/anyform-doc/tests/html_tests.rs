@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use anyform_core::{Options, Priority, StdLog, Value};
+use anyform_core::{Options, StdLog, Value};
 
 fn fixtures_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures")
@@ -24,7 +24,7 @@ fn convert_with_options(name: &str, epub: &str, opts: Options) -> String {
 fn opts(pairs: &[(&str, Value)]) -> Options {
     let mut opts = Options::new();
     for (name, value) in pairs {
-        opts.set(name, value.clone(), Priority::UserSet);
+        opts.set(name, value.clone());
     }
     opts
 }

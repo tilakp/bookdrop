@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use anyform_core::{ConvError, Log, Options, Priority, StdLog, Value};
+use anyform_core::{ConvError, Log, Options, StdLog, Value};
 
 /// Requires the vendored chrome-headless-shell binary — run
 /// `rust/scripts/fetch-chromium.sh` once before `cargo test` (see plan
@@ -33,7 +33,7 @@ fn convert_fixture_with_options(test_name: &str, opts: Options) -> lopdf::Docume
 fn opts(pairs: &[(&str, Value)]) -> Options {
     let mut opts = Options::new();
     for (name, value) in pairs {
-        opts.set(name, value.clone(), Priority::UserSet);
+        opts.set(name, value.clone());
     }
     opts
 }

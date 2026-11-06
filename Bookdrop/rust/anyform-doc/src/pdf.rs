@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, OnceLock};
 
-use anyform_core::{ConvError, Log, OptionSpec, Options, OutputPlugin};
+use anyform_core::{ConvError, Log, Options, OutputPlugin};
 use headless_chrome::browser::tab::RequestPausedDecision;
 use headless_chrome::protocol::cdp::{Emulation, Fetch, Network};
 use headless_chrome::types::PrintToPdfOptions;
@@ -33,10 +33,6 @@ impl OutputPlugin<DocumentIR> for PdfOutput {
 
     fn extension(&self) -> &'static str {
         "pdf"
-    }
-
-    fn options(&self) -> &'static [OptionSpec] {
-        &[]
     }
 
     fn convert(&self, ir: &DocumentIR, output: &Path, opts: &Options, log: &dyn Log) -> Result<(), ConvError> {

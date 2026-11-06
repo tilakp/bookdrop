@@ -87,35 +87,18 @@ impl Log for StdLog {
     }
 }
 
-/// Mirrors calibre's `OptionRecommendation` levels: a plugin default can be
-/// overridden by a device/output profile, which can in turn be overridden by
-/// an explicit user setting, but never the other way around.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum Priority {
-    PluginDefault = 0,
-    Profile = 1,
-    UserSet = 2,
-}
-
 #[derive(Debug, Clone)]
 pub enum Value {
     Bool(bool),
-    Int(i64),
     Float(f64),
     Str(String),
 }
 
-pub struct OptionSpec {
-    pub name: &'static str,
-    pub default: Value,
-    pub help: &'static str,
-}
-
-/// A set of option values, each tagged with the priority it was set at — a
-/// lower-priority write never clobbers a higher-priority one already present.
+/// Named option values from the host. Each plugin reads the keys it knows,
+/// with its own default, and ignores the rest.
 #[derive(Default)]
 pub struct Options {
-    values: HashMap<String, (Value, Priority)>,
+    values: HashMap<String, Value>,
 }
 
 impl Options {
@@ -123,17 +106,12 @@ impl Options {
         Self::default()
     }
 
-    pub fn set(&mut self, name: &str, value: Value, priority: Priority) {
-        if let Some((_, existing)) = self.values.get(name) {
-            if *existing > priority {
-                return;
-            }
-        }
-        self.values.insert(name.to_string(), (value, priority));
+    pub fn set(&mut self, name: &str, value: Value) {
+        self.values.insert(name.to_string(), value);
     }
 
     pub fn get(&self, name: &str) -> Option<&Value> {
-        self.values.get(name).map(|(v, _)| v)
+        self.values.get(name)
     }
 
     pub fn get_str(&self, name: &str) -> Option<&str> {
@@ -153,7 +131,6 @@ impl Options {
     pub fn get_f64(&self, name: &str, default: f64) -> f64 {
         match self.get(name) {
             Some(Value::Float(f)) => *f,
-            Some(Value::Int(i)) => *i as f64,
             _ => default,
         }
     }
@@ -168,22 +145,12 @@ pub trait InputPlugin<IR>: Send + Sync {
 pub trait OutputPlugin<IR>: Send + Sync {
     fn name(&self) -> &'static str;
     fn extension(&self) -> &'static str;
-    fn options(&self) -> &'static [OptionSpec] {
-        &[]
-    }
     fn convert(&self, ir: &IR, output: &Path, opts: &Options, log: &dyn Log) -> Result<(), ConvError>;
-}
-
-/// Optional IR-level passes shared across output formats (hyphenation, font
-/// subsetting, link rewriting) — analogous to calibre's `oeb/polish/*`.
-pub trait Transform<IR>: Send + Sync {
-    fn apply(&self, ir: &mut IR, opts: &Options) -> Result<(), ConvError>;
 }
 
 pub struct Registry<IR> {
     inputs: HashMap<&'static str, Arc<dyn InputPlugin<IR>>>,
     outputs: HashMap<&'static str, Arc<dyn OutputPlugin<IR>>>,
-    transforms: Vec<Arc<dyn Transform<IR>>>,
 }
 
 impl<IR> Registry<IR> {
@@ -191,7 +158,6 @@ impl<IR> Registry<IR> {
         Self {
             inputs: HashMap::new(),
             outputs: HashMap::new(),
-            transforms: Vec::new(),
         }
     }
 
@@ -203,10 +169,6 @@ impl<IR> Registry<IR> {
 
     pub fn add_output(&mut self, plugin: Arc<dyn OutputPlugin<IR>>) {
         self.outputs.insert(plugin.extension(), plugin);
-    }
-
-    pub fn add_transform(&mut self, transform: Arc<dyn Transform<IR>>) {
-        self.transforms.push(transform);
     }
 
     pub fn parse(&self, input: &Path, opts: &Options, log: &dyn Log) -> Result<IR, ConvError> {
@@ -231,10 +193,7 @@ impl<IR> Registry<IR> {
             .get(out_ext.as_str())
             .ok_or_else(|| ConvError::NoOutputPlugin(out_ext.clone()))?;
 
-        let mut ir = self.parse(input, opts, log)?;
-        for t in &self.transforms {
-            t.apply(&mut ir, opts)?;
-        }
+        let ir = self.parse(input, opts, log)?;
 
         // Plugins write to a temp file next to `output`, which is renamed
         // into place only on success. A failed or cancelled conversion then

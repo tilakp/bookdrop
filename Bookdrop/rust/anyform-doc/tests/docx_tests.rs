@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use anyform_core::{Options, Priority, StdLog, Value};
+use anyform_core::{Options, StdLog, Value};
 use docx_rs::{read_docx, DocumentChild, ParagraphChild, RunChild};
 
 fn fixtures_dir() -> PathBuf {
@@ -25,7 +25,7 @@ fn convert_with_options(name: &str, epub: &str, opts: Options) -> Vec<u8> {
 fn opts(pairs: &[(&str, Value)]) -> Options {
     let mut opts = Options::new();
     for (name, value) in pairs {
-        opts.set(name, value.clone(), Priority::UserSet);
+        opts.set(name, value.clone());
     }
     opts
 }

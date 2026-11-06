@@ -13,7 +13,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
-use anyform_core::{Log, Options, Priority, Value};
+use anyform_core::{Log, Options, Value};
 use anyform_doc::{DocumentIR, TocNode};
 use serde::Serialize;
 
@@ -332,7 +332,7 @@ unsafe fn options_from_json(s: *const c_char) -> Result<Options, String> {
             serde_json::Value::String(s) => Value::Str(s),
             _ => continue,
         };
-        opts.set(&key, value, Priority::UserSet);
+        opts.set(&key, value);
     }
     Ok(opts)
 }
