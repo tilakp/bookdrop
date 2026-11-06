@@ -1,6 +1,5 @@
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::time::Instant;
 
 use anyform_core::{ConvError, Log, Options, Priority, StdLog, Value};
 
@@ -219,17 +218,16 @@ fn cancellation_stops_in_flight_chapter_rendering() {
     let log = CancelAfter { calls: AtomicUsize::new(0), after: 3 };
     let registry = anyform_doc::document_registry();
 
-    let start = Instant::now();
     let result = registry.convert(&fixture, &output, &Options::new(), &log);
-    let elapsed = start.elapsed();
 
     assert!(matches!(result, Err(ConvError::Cancelled)), "expected Cancelled, got {result:?}");
     assert!(!output.exists(), "cancelled conversion should not have written an output file");
-    // The full uncancelled conversion of this 29-chapter book takes ~10s;
-    // stopping after 3 chapters across an 8-tab pool should be well under
-    // that if cancellation is actually propagating, not just checked once
-    // up front.
-    assert!(elapsed.as_secs() < 8, "cancellation took {elapsed:?}, expected it to stop well before full completion");
+    // Counted in chapters, not seconds, so a slow or busy machine cannot
+    // fail it. Each progress call is one rendered chapter (or the cover).
+    // After cancellation, each worker may finish only the chapter it is
+    // on: at most 3 + one per worker (8), far below the book's 29.
+    let rendered = log.calls.load(Ordering::SeqCst);
+    assert!(rendered <= 3 + 8, "{rendered} chapters rendered after cancelling at 3: workers did not stop");
 }
 
 #[test]
