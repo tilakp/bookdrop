@@ -19,18 +19,13 @@ use crate::ir::SpineItem;
 use super::chapter_html::prepare_chapter_html;
 use super::{RenderOptions, sniff_image_mime};
 
-/// Renders `indices` (spine positions) concurrently across a small pool of
-/// Chrome tabs on the same browser instance, sized to the CPU count like
-/// calibre's own PDF-output worker pool (`detect_ncpus()` in
-/// `html_writer.py`) - this was the actual source of calibre's conversion
-/// speed advantage found earlier this session, not a different rendering
-/// approach. Work is split into contiguous chunks up front (not a
-/// work-stealing queue) since chapters are usually similar in size, so
-/// static chunking is simple and good enough. Results are returned in
-/// original spine order regardless of which worker finished first or
-/// slowest, since the merge step requires spine order. `done_count` is a
-/// single shared counter so progress reported to `log` stays monotonic
-/// even though completion order across workers is not spine order.
+/// Renders `indices` (spine positions) in parallel on a small pool of
+/// Chrome tabs in one browser, sized to the CPU count (at most 8), as
+/// calibre's PDF output does. This parallelism, not a different renderer,
+/// is what made calibre faster. Work is split into contiguous chunks up
+/// front, because chapters are usually of similar size. Results come back
+/// in spine order, which the merge needs. `done_count` is shared, so the
+/// progress stays monotonic although workers finish out of order.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn render_chapters_parallel(
     browser: &Browser,
@@ -124,21 +119,13 @@ fn render_one_chapter(tab: &Tab, render_path: &Path, href: &str, opts: &RenderOp
     lopdf::Document::load_mem(&bytes).map_err(|e| ConvError::Other(format!("failed to parse rendered PDF for {href}: {e}")))
 }
 
-/// Chrome's print_to_pdf turns a same-document fragment link (`<a
-/// href="thisfile.html#note3">`, which is how EPUB footnote/cross-
-/// reference links are written even when the target is in the very file
-/// being printed) into a working `/Dest /note3` link annotation plus a
-/// `/Dests` name dictionary on that chapter's own catalog mapping
-/// `note3` to an exact page/position - confirmed empirically before
-/// writing this. Since every chapter is printed as an independent
-/// single-file PDF, each chapter's dest names live in their own
-/// namespace and would collide across chapters once merged (e.g. two
-/// different chapters both defining `fn1`). This renames every entry in
-/// this chapter's own Dests dictionary to `{prefix}::{name}`, and
-/// rewrites this chapter's own Link annotations to match, so the
-/// destinations survive `merge_chapter_pdfs` consolidating every
-/// chapter's Dests dictionary into one on the merged document without
-/// colliding.
+/// Chrome's `print_to_pdf` turns a same-document fragment link (`<a
+/// href="thisfile.html#note3">`, the usual EPUB footnote form) into a
+/// working `/Dest /note3` link plus a `/Dests` entry on that chapter's
+/// catalog. Each chapter is a separate PDF, so names such as `fn1` would
+/// collide after the merge. This renames every entry in this chapter's
+/// Dests dictionary to `{prefix}::{name}` and updates its Link annotations
+/// to match, so `merge_chapter_pdfs` can combine all chapters' Dests.
 fn namespace_chapter_dests(doc: &mut lopdf::Document, prefix: &str) {
     let dests_id = doc
         .objects

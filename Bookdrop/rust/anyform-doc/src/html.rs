@@ -6,25 +6,14 @@ use anyform_core::{ConvError, Log, Options, OutputPlugin};
 use crate::ir::{DocumentIR, TocNode};
 use crate::pdf::sniff_image_mime;
 
-/// Self-contained HTML output - a Rust port of Bookdrop's Swift
-/// `HtmlConverter`: CSS inlined into a `<style>` block, images embedded as
-/// base64 `data:` URIs, so the output has zero external dependencies and
-/// works with the network off.
+/// Self-contained HTML output: CSS inlined into one `<style>` block and
+/// images embedded as base64 `data:` URIs, so the file works offline and
+/// needs no other files.
 ///
-/// One deliberate divergence from the Swift original: resource iteration
-/// (images for data-URI inlining, CSS files for `<style>` concatenation,
-/// and reference-rewrite candidates) is sorted rather than iterated in
-/// `HashMap` order, and reference rewriting runs in two passes (see
-/// `rewrite_references`'s own doc comment for why). The Swift version
-/// iterated an unordered dictionary in a single combined pass, which was
-/// both non-deterministic *and* could let one resource's bare-filename
-/// fallback shadow a *different* resource's own exact short-href match.
-///
-/// Everything else - the TOC's flat-by-spine-index shape (not nested, even
-/// though `ir.toc` is a tree), the exact class names/style rules, the
-/// error policy (only an empty spine throws; unreadable images/CSS/
-/// chapters are silently skipped) - matches the Swift original exactly on
-/// purpose, not "improved."
+/// Resources are processed in sorted order, not `HashMap` order, so the
+/// output is the same on every run (see `rewrite_references`). The TOC is
+/// flat, one entry per spine item, even though `ir.toc` is a tree. Only an
+/// empty spine is an error; unreadable images, CSS or chapters are skipped.
 pub struct HtmlOutput;
 
 impl OutputPlugin<DocumentIR> for HtmlOutput {
@@ -134,33 +123,20 @@ impl OutputPlugin<DocumentIR> for HtmlOutput {
 const CONTENT_SECURITY_POLICY: &str = "<meta http-equiv=\"Content-Security-Policy\" \
      content=\"default-src 'none'; img-src data:; style-src 'unsafe-inline'; font-src data:\">";
 
-/// Best-effort: matches manifest hrefs (and their bare filename) verbatim
-/// against quoted attribute values and CSS `url(...)` references. Doesn't
-/// resolve arbitrary relative-path forms (`../images/x.jpg` from a nested
-/// chapter file won't match a manifest href of `images/x.jpg`) - matches
-/// the Swift original's own documented limitation.
+/// Best-effort: replaces manifest hrefs (and their bare file names) where
+/// they appear verbatim in quoted attributes and CSS `url(...)`. It does
+/// not resolve other relative forms: `../images/x.jpg` in a nested chapter
+/// does not match the manifest href `images/x.jpg`.
 ///
-/// Two passes, deliberately: every candidate's *exact* href match first
-/// (quoted forms and CSS `url(...)`), then every candidate's bare-filename
-/// fallback second. A single combined pass (tried first, then rejected)
-/// could let a *different* resource's bare-filename fallback consume a
-/// short href's own exact match before the short href got its turn - e.g.
-/// "logo.png" and "images/logo.png" share the filename "logo.png", so a
-/// chapter correctly referencing its own root-level "logo.png" would get
-/// silently overwritten by "images/logo.png"'s bare-filename branch if
-/// that ran first. Doing every exact match first avoids this: manifest
-/// hrefs are unique keys, so exact matches can never collide with each
-/// other regardless of order, and by the time bare-filename fallback runs,
-/// every legitimately-exact reference has already been resolved and can
-/// no longer be matched by a stray bare-filename search.
+/// Two passes: all exact href matches first, then all bare-file-name
+/// matches. In one pass, the file-name match of "images/logo.png" could
+/// replace a chapter's correct reference to a root-level "logo.png" before
+/// that exact match ran. Exact matches cannot collide, because manifest
+/// hrefs are unique.
 ///
-/// This does *not* fully resolve the genuinely ambiguous case of two
-/// *different* images sharing the same bare filename in different
-/// directories, both referenced only by that bare filename (no realistic
-/// way to know which chapter "meant" which from string content alone) -
-/// but it does make that case deterministic (same resolution every run,
-/// based on the sort below) instead of dependent on `HashMap` iteration
-/// order, which is what actually varied between runs before this fix.
+/// Two different images with the same file name, both referenced only by
+/// that name, stay ambiguous. The sort makes the result the same on every
+/// run.
 fn rewrite_references(text: &str, data_uris: &HashMap<String, String>) -> String {
     let mut candidates: Vec<(&String, &String)> = data_uris.iter().collect();
     candidates.sort_by(|a, b| b.0.len().cmp(&a.0.len()).then_with(|| a.0.cmp(b.0)));

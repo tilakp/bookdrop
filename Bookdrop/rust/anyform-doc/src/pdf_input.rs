@@ -1,22 +1,12 @@
-//! Reads PDF files by extracting positioned text via `pdfium.rs`, then
-//! reconstructing reflowable chapter structure via `pdf_layout.rs`'s
-//! heuristics, and materializing the result as synthesized XHTML chapter
-//! files - exactly like `EpubInput` builds an IR from an extracted EPUB,
-//! except the source files don't already exist and have to be generated.
-//! Registering this plugin makes `.pdf` reachable from *every* existing
-//! output format (`.epub`/`.txt`/`.html`/`.docx`/`.pdf`) automatically -
-//! see `Registry::convert`'s independent input/output dispatch in
-//! `anyform-core` - so this is the one plugin needed for "PDF to EPUB and
-//! other formats."
+//! Reads PDFs: `pdfium.rs` extracts positioned text, `pdf_layout.rs`
+//! rebuilds chapters, and this plugin writes them as XHTML files, so the IR
+//! looks like an extracted EPUB. Every output format then works for PDF
+//! input with no extra code.
 //!
-//! This is a deliberately-scoped MVP, not a general PDF-to-reflow solution:
-//! text-layer PDFs only (scanned/image-only PDFs are detected and refused),
-//! single-column only (multi-column layouts are detected and refused rather
-//! than silently scrambling reading order), no OCR, no table extraction, no
-//! CJK-encoding hardening beyond whatever pdfium provides for free. An
-//! honest refusal on what this can't handle well is the feature, not a
-//! shortcoming - see the "PDF as an input format" entry in
-//! `ANYFORM-FULL-SPEC.md` §6 for the full rationale and known limitations.
+//! The scope is deliberate: text-layer, single-column PDFs. Scanned and
+//! multi-column PDFs are detected and refused with a clear error, instead
+//! of producing empty or scrambled text. No OCR, no table extraction. See
+//! "PDF as an input format" in `ANYFORM-FULL-SPEC.md` §6.
 
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
@@ -40,9 +30,8 @@ const SCANNED_CHARS_PER_PAGE_THRESHOLD: usize = 100;
 const SCANNED_IMAGE_RATIO_THRESHOLD: f32 = 0.3;
 
 /// `PdfInput` reports progress in `0.0..=0.30` and leaves the rest of the
-/// bar to whichever output plugin runs next - matching `KindleInput`'s
-/// early-band convention (§0.7 of the PDF-input plan) so the UI bar doesn't
-/// visibly run to 100% and snap back for a slow multi-hundred-page PDF.
+/// bar to the output plugin, like `KindleInput`, so the bar does not run to
+/// 100% and jump back on a long PDF.
 const PROGRESS_EXTRACT_END: f64 = 0.20;
 const PROGRESS_DONE: f64 = 0.30;
 

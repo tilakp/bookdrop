@@ -87,7 +87,8 @@ final class MultiConversionModel: ObservableObject {
                 let outputURL = nextAvailableURL(
                     directory: outputDirectory, baseName: sanitizedFilename(book.title),
                     extension: format.fileExtension)
-                let resultURL = try await convert(book: book, options: options, outputURL: outputURL, progress: progress)
+                let resultURL = try await RustConversionEngine.convert(
+                    book: book, options: options, outputURL: outputURL, progress: progress)
 
                 jobs[index].status = .done(resultURL)
                 historyStore.add(
@@ -100,15 +101,5 @@ final class MultiConversionModel: ObservableObject {
                 jobs[index].status = .failed(cancelled ? "Cancelled" : error.localizedDescription)
             }
         }
-    }
-
-    private func convert(
-        book: Book, options: PDFOptions, outputURL: URL, progress: ConversionProgress
-    ) async throws -> URL {
-        // Every output format now goes through the Rust engine (Phase 6 —
-        // see ANYFORM-FULL-SPEC.md). Dispatch is by the output path's
-        // extension, on the Rust side, so this Swift call is already
-        // fully generic — see RustConversionEngine.swift's doc comment.
-        try await RustConversionEngine.convert(book: book, options: options, outputURL: outputURL, progress: progress)
     }
 }

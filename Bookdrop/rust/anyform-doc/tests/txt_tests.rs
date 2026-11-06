@@ -29,9 +29,8 @@ fn includes_title_author_and_all_chapters() {
 
 #[test]
 fn strips_all_markup() {
-    // Load-bearing assertion carried over from the Swift TxtConverterTests
-    // original: the whole point of TXT output is that no markup survives,
-    // not just that the body was extracted.
+    // The main promise of TXT output: no markup survives, not only that
+    // the body text is there.
     let text = convert("no-markup", "minimal.epub");
     assert!(!text.contains('<') && !text.contains('>'));
 }

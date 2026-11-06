@@ -1,20 +1,12 @@
-//! Pure, pdfium-free layout reconstruction: glyphs -> lines -> blocks ->
-//! chapters. Everything here operates on plain owned data (the
-//! `Glyph`/`Line`/`PageText`/`Block`/`Chapter`/`OutlineEntry` vocabulary
-//! below), built by `pdfium.rs` from a real PDF. Keeping this module free of
-//! any FFI or I/O is what makes every heuristic here unit-testable against
-//! hand-built fixtures, with no bundled dylib and no PDF file needed - see
-//! the PDF-input plan's §2. Mirrors `htmltext.rs`'s role as a shared
-//! non-plugin helper, though the `BlockKind`/`Block` vocabulary here is
-//! deliberately its own type: no runs, no list/blockquote/pre - a PDF has no
-//! source markup to recover any of that from.
+//! Layout reconstruction for PDF input: glyphs -> lines -> blocks ->
+//! chapters. It works only on plain owned data built by `pdfium.rs`, with
+//! no FFI and no I/O, so every heuristic is unit-testable with hand-built
+//! fixtures. Its `BlockKind`/`Block` types are separate from `htmltext.rs`:
+//! a PDF has no markup to recover lists, quotes or bold runs from.
 //!
-//! Every threshold constant below is a *starting point* calibrated against
-//! `anyform-doc/tests/fixtures/`'s synthetic PDF fixtures (see
-//! `pdf_input_tests.rs`), not a derived truth - see the PDF-input plan's
-//! Risk #2. `pdfium.rs` already filters out control characters (`\r`/`\n`)
-//! before glyphs reach here, so every `Glyph` below is assumed to carry a
-//! real, printable character with a real bounding box.
+//! The threshold constants are starting points calibrated on the fixtures
+//! in `tests/fixtures/`, not derived values. `pdfium.rs` removes control
+//! characters first, so every `Glyph` has a printable character and a box.
 
 use std::collections::HashMap;
 
@@ -118,33 +110,19 @@ pub(crate) fn group_lines(page: &PageText) -> Vec<Line> {
         return Vec::new();
     }
 
-    // Deliberately does NOT sort glyphs by position - pdfium's own
-    // `chars()` order already *is* reading order (it reflects the PDF
-    // content stream's text-showing sequence, not derived from bounding
-    // boxes), and is more trustworthy than re-deriving order from x0/y0.
-    // Caught live on a real commercially-typeset PDF: some producers
-    // (calibre's own PDF writer among them) emit word-space characters
-    // with a degenerate zero-width bounding box whose reported x-position
-    // can fall slightly *after* the following glyph's - sorting by x0
-    // then reordered the space to land one character late ("put them
-    // through" -> "put them t hrough"), corrupting otherwise-perfectly
-    // extracted text. Trusting emission order for both which line a glyph
-    // belongs to and its position within that line sidesteps the problem
-    // entirely, since it never depends on a bounding box being reliable
-    // for ordering, only for line-clustering (where being off by a
-    // fraction of a glyph height, not a whole glyph width, is harmless).
+    // Glyphs are NOT sorted by position. pdfium's `chars()` order is the
+    // content stream's drawing order, which is reading order. Bounding
+    // boxes are less reliable: some producers (calibre's PDF writer among
+    // them) emit word spaces with a zero-width box placed slightly after
+    // the next glyph, and a sort by x0 turned "put them through" into
+    // "put them t hrough". Boxes are used only to cluster glyphs into
+    // lines, where an error of a fraction of a glyph height does no harm.
     //
-    // Cluster against an *expanding* [y_min, y_max] window for the current
-    // line, not a fixed anchor set once at the line's first glyph.
-    // Ascenders ('h','k','l','t'...) push y1 up and descenders
-    // ('p','g','j','q','y'...) push y0 down relative to x-height glyphs, so
-    // a fixed single anchor point (this function's first cut) misclassifies
-    // a descender mid-word into its own line the moment its y-midpoint
-    // drifts past a threshold measured from a page-wide median height -
-    // caught live on a real "Chapter One" heading, where 'p' split off into
-    // its own bogus line. The threshold itself is measured off each
-    // glyph's own height (not a page-wide median) so large headings and
-    // small body text both get a threshold proportional to their own size.
+    // Each line grows a [y_min, y_max] window, not a fixed anchor from its
+    // first glyph. Ascenders and descenders move y1 and y0, and a fixed
+    // anchor put the 'p' of a "Chapter One" heading on a line of its own.
+    // The threshold scales with each glyph's own height, so large headings
+    // and small body text both get a fitting tolerance.
     let mut clusters: Vec<Vec<&Glyph>> = Vec::new();
     let mut cluster_y_min = f32::MAX;
     let mut cluster_y_max = f32::MIN;
@@ -163,18 +141,11 @@ pub(crate) fn group_lines(page: &PageText) -> Vec<Line> {
         clusters.last_mut().unwrap().push(g);
     }
 
-    // Word-gap detection needs a threshold calibrated per font, not per
-    // line: a single short line rarely carries enough gap samples to find
-    // a reliable split between "intra-word kerning" and "real word gap"
-    // on its own - caught live on a real book where a short dialogue-style
-    // line ("dependable, no-nonsense") had so few samples that the
-    // per-line elbow-finder mistook ordinary kerning variance for the
-    // split point, over-segmenting nearly every letter. Pooling gap
-    // samples across the whole *page*, bucketed by font size (so a page
-    // mixing a heading with body text doesn't blur two genuinely
-    // different fonts' spacing together), gives each bucket dozens to
-    // hundreds of samples instead of a handful - see
-    // `page_word_gap_thresholds`.
+    // Word-gap thresholds are found per font size across the whole page,
+    // not per line: one short line has too few gap samples, and the
+    // per-line version split nearly every letter of "dependable,
+    // no-nonsense". Buckets by font size keep a heading's spacing apart
+    // from body text. See `page_word_gap_thresholds`.
     let thresholds = page_word_gap_thresholds(&clusters);
     clusters.into_iter().map(|cluster| build_line(&cluster, page.index, &thresholds)).collect()
 }
@@ -204,32 +175,17 @@ fn page_word_gap_thresholds(clusters: &[Vec<&Glyph>]) -> HashMap<i32, f32> {
         .collect()
 }
 
-// A fixed fraction of font size cannot serve every typeface at once, and
-// neither can a single multiple of the *median* gap - both were tried live
-// against two different fonts in the same real book and each broke the
-// other. A display heading (condensed face) measured intra-word gaps of
-// ~0.15-1.8pt against real word gaps of ~3.3-4.0pt - a wide separation,
-// needing roughly 2x the median to clear. A body-text checklist section
-// (different, tighter-kerned face, many literally negative kerning pairs)
-// measured intra-word gaps running as high as ~1.6-2.0pt against real word
-// gaps as low as ~2.0-3.4pt - a *narrow* separation, where 2x the median
-// wrongly split "the" into "th e", and 3x the median missed the heading's
-// real word gaps entirely. Neither font's ratio generalizes to the other.
+// No fixed rule fits every typeface. In one real book, a condensed heading
+// face had intra-word gaps of 0.15-1.8pt and word gaps of 3.3-4.0pt, while
+// a tighter body face had intra-word gaps up to 2.0pt and word gaps from
+// 2.0pt. A fixed fraction of the font size, or a multiple of the median
+// gap, fixed one face and broke the other ("the" -> "th e").
 //
-// What both fonts' data *do* share: a genuine, findable gap in the sorted
-// list of intra-word spacings, separating the tightly-clustered kerning
-// values from the handful of much larger true word-gap values - because
-// "letter next to letter" and "word next to word" spacing are
-// categorically different, just not by any fixed ratio across fonts.
-// Finding that split point directly (the largest jump between consecutive
-// sorted gaps) adapts to whatever a font's own kerning/spacing turns out
-// to be. It needs real statistical weight to do that reliably, though: a
-// single short line (caught live on "dependable, no-nonsense", a
-// dialogue-style line with too few kerning samples of its own) can have
-// its ordinary kerning *variance* mistaken for the split point, wrongly
-// splitting nearly every letter - which is why `page_word_gap_thresholds`
-// pools samples across a whole page's lines per font-size bucket before
-// calling this, rather than calling it per line directly.
+// What both faces share is a clear jump in the sorted gap list between
+// kerning and word spacing. This finds that jump directly (the largest
+// step between consecutive sorted gaps). It needs many samples to be
+// reliable, so `page_word_gap_thresholds` pools a whole page's lines per
+// font-size bucket before it calls this.
 const WORD_GAP_MIN_SAMPLES: usize = 20;
 const WORD_GAP_MIN_JUMP: f32 = 0.5;
 
@@ -691,7 +647,8 @@ fn body_font_size(lines: &[Line]) -> f32 {
 
 /// Returns up to `MAX_HEADING_TIERS` distinct sizes (descending) that
 /// qualify as headings, and whether the heading signal is too weak/absent
-/// to trust (see the PDF-input plan §3.4's "large-print book" guard).
+/// to trust: when more than `HEADING_CHAR_FRACTION_GUARD` of the text is
+/// heading-sized (a large-print book, for example), no size is trusted.
 fn heading_tiers(lines: &[Line], body_size: f32) -> (Vec<f32>, bool) {
     let mut weight_by_size: HashMap<i32, u32> = HashMap::new();
     let mut total_chars = 0u32;
@@ -748,7 +705,6 @@ pub(crate) fn split_chapters(
     low_confidence: bool,
     outline: &[OutlineEntry],
     fallback_title: &str,
-    page_count: usize,
     log: &dyn Log,
 ) -> Vec<Chapter> {
     if all_blocks.is_empty() {
@@ -780,7 +736,7 @@ pub(crate) fn split_chapters(
              falling back to fixed page chunking"
         ));
         let all_blocks: Vec<Block> = chapters.into_iter().flat_map(|c| c.blocks).collect();
-        return chunk_by_pages(all_blocks, page_count);
+        return chunk_by_pages(all_blocks);
     }
 
     chunk_oversized_chapters(chapters, log)
@@ -880,7 +836,7 @@ fn split_by_headings(blocks: Vec<Block>, fallback_title: &str) -> Vec<Chapter> {
     chapters
 }
 
-fn chunk_by_pages(blocks: Vec<Block>, page_count: usize) -> Vec<Chapter> {
+fn chunk_by_pages(blocks: Vec<Block>) -> Vec<Chapter> {
     if blocks.is_empty() {
         return Vec::new();
     }
@@ -904,7 +860,6 @@ fn chunk_by_pages(blocks: Vec<Block>, page_count: usize) -> Vec<Chapter> {
         let end_page = current_blocks.last().unwrap().page.max(current_start_page);
         chapters.push(Chapter { title: format!("Pages {}-{}", current_start_page + 1, end_page + 1), blocks: current_blocks });
     }
-    let _ = page_count;
     chapters
 }
 
@@ -978,10 +933,10 @@ fn xml_escape(s: &str) -> String {
 
 // ---- Orchestration entry point used by pdf_input.rs ----
 
-/// Runs the full pipeline (3.1-3.6) over already-extracted page glyph data.
-/// Returns `Err` only for the "no usable text after layout" case (§4) -
-/// every other degradation (no headings, too many headings, oversized
-/// chapters) falls back rather than failing, per §3.5's sanity guards.
+/// Runs the whole pipeline (lines, running heads, columns, blocks,
+/// chapters) on extracted glyph data. Returns `Err` only when the layout is
+/// multi-column. Every other problem (no headings, too many headings,
+/// oversized chapters) falls back to a simpler split instead of failing.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn build_chapters(
     pages: &[PageText],
@@ -1030,9 +985,8 @@ pub(crate) fn build_chapters(
         }
     }
 
-    let page_count = pages.len();
     let low_confidence_overall = all_blocks.is_empty() || any_low_confidence && all_blocks.iter().all(|b| matches!(b.kind, BlockKind::Paragraph));
-    let chapters = split_chapters(all_blocks, low_confidence_overall, outline, fallback_title, page_count, log);
+    let chapters = split_chapters(all_blocks, low_confidence_overall, outline, fallback_title, log);
     Ok(chapters)
 }
 
@@ -1113,7 +1067,7 @@ mod tests {
 
     #[test]
     fn page_level_pooling_splits_a_heading_too_short_to_calibrate_on_its_own() {
-        // Caught live on a real book: "Marcus Was a Victim of His
+        // Seen in a real book: "Marcus Was a Victim of His
         // Blindspots" collapsed to "MarcusWasaVictimofHisBlindspots"
         // because a single heading line rarely carries enough intra-word
         // gap samples to find its own reliable split between kerning and
@@ -1126,7 +1080,7 @@ mod tests {
         // (0.25 x 24pt = 6.0pt), well above this heading's own real word
         // gap (3.5pt) - it would wrongly run every word together. Pooled
         // across all four lines (24 kerning + 8 word-gap samples), there's
-        // enough data to find the real elbow instead (verified live: with
+        // enough data to find the real elbow instead (checked: with
         // `page_word_gap_thresholds` stubbed to return an empty map -
         // simulating "no pooling" - this test fails exactly as described,
         // and passes again once pooling is restored).
@@ -1168,8 +1122,8 @@ mod tests {
 
     #[test]
     fn degenerate_zero_width_space_does_not_reorder_the_following_letter() {
-        // Caught live on a real commercially-typeset PDF (calibre's own PDF
-        // writer, of all things): a word-space glyph can carry a
+        // Seen in a commercially typeset PDF (made by calibre's PDF
+        // writer): a word-space glyph can carry a
         // zero-width bounding box (x0 == x1) whose reported x-position
         // falls *after* the following real letter's x0 - e.g. observed
         // "put them|<space x0=138.71>|<'t' of through, x0=138.04>", i.e.
@@ -1384,7 +1338,7 @@ mod tests {
             blocks.push(Block { kind: BlockKind::Heading(1), text: format!("H{i}"), page: i, anchor: format!("b{i}") });
         }
         let log = NoopLog;
-        let chapters = split_chapters(blocks, false, &[], "Untitled", 260, &log);
+        let chapters = split_chapters(blocks, false, &[], "Untitled", &log);
         assert!(chapters.iter().all(|c| c.title.starts_with("Pages")), "should fall back to page chunking: {chapters:?}");
     }
 
@@ -1399,7 +1353,7 @@ mod tests {
             OutlineEntry { title: "Chapter Two".into(), page_index: Some(5), children: vec![] },
         ];
         let log = NoopLog;
-        let chapters = split_chapters(blocks, false, &outline, "Untitled", 40, &log);
+        let chapters = split_chapters(blocks, false, &outline, "Untitled", &log);
         assert_eq!(chapters.len(), 2);
         assert_eq!(chapters[0].title, "Chapter One");
         assert_eq!(chapters[1].title, "Chapter Two");

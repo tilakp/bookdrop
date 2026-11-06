@@ -30,11 +30,9 @@ fn opts(pairs: &[(&str, Value)]) -> Options {
     opts
 }
 
-/// Flattens every run's text across the whole document, in order - the
-/// same acceptance bar as the Swift original's own round-trip test: what
-/// matters is that a real reader (here, docx-rs's own `read_docx`, the
-/// same model used by both its reader and writer) gets the right content
-/// back, not just that bytes were written.
+/// Flattens every run's text across the whole document, in order. Reading
+/// the file back with docx-rs's own `read_docx` checks that a real reader
+/// gets the right content, not only that bytes were written.
 fn full_text(docx: &docx_rs::Docx) -> String {
     let mut text = String::new();
     for child in &docx.document.children {
@@ -120,9 +118,7 @@ fn empty_spine_is_rejected() {
 
 #[test]
 fn real_book_converts_with_plausible_content() {
-    // Loose bound calibrated from an actual run (4,481 paragraphs
-    // measured directly), not guessed, following this session's
-    // established real-book-test pattern.
+    // Loose bound, set from a measured run (4,481 paragraphs).
     let bytes = convert("real-book", "pride-and-prejudice.epub");
     let docx = read_docx(&bytes).expect("real book output should be a valid, readable DOCX");
     let para_count = docx.document.children.iter().filter(|c| matches!(c, DocumentChild::Paragraph(_))).count();

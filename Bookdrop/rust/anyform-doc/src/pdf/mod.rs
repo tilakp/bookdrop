@@ -16,15 +16,12 @@ use self::chapter_html::{toc_fragments_by_chapter, spine_item_is_cover_page};
 use self::merge::merge_chapter_pdfs;
 use self::decorate::{add_page_decorations, set_metadata};
 
-/// Renders each spine chapter through a bundled headless-Chromium binary
-/// (chrome-headless-shell, fetched by `scripts/fetch-chromium.sh` — see
-/// plan Phase 2) via `Page.printToPDF`, then merges the resulting
-/// single-format PDFs into one document with an outline built from the
-/// EPUB's TOC — mirrors the shape of Bookdrop's Swift `PdfConverter`
-/// (chapter-by-chapter render + merge) but with Chromium doing the
-/// HTML/CSS layout instead of WKWebView. Full option surface (page size,
-/// margins, typography, headers/footers/page numbers) mirrors Bookdrop's
-/// `PDFOptions` — see `RenderOptions::from_options`.
+/// PDF output: the bundled headless Chromium (`chrome-headless-shell`,
+/// from `scripts/fetch-chromium.sh`) prints each spine chapter with
+/// `Page.printToPDF`. The chapter PDFs are then merged into one document
+/// with an outline from the TOC. The options (page size, margins,
+/// typography, headers, footers, page numbers) match the app's
+/// `PDFOptions`; see `RenderOptions::from_options`.
 pub struct PdfOutput;
 
 impl OutputPlugin<DocumentIR> for PdfOutput {

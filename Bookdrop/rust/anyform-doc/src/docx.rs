@@ -6,34 +6,18 @@ use docx_rs::{Docx, Paragraph, Pic, Run, RunFonts, Style, StyleType};
 use crate::htmltext::{self, BlockKind};
 use crate::ir::DocumentIR;
 
-/// Word (.docx) output - a Rust port of Bookdrop's Swift `DocxConverter`.
-/// The Swift original used `NSAttributedString`'s native `.officeOpenXML`
-/// document type (the same mechanism TextEdit's "Save as Word Document"
-/// uses) rather than hand-rolling OOXML; that's an AppKit-only API, so this
-/// builds the document structure directly via `docx-rs` instead, driven by
-/// `htmltext::extract_blocks` (shared with `TxtOutput`).
+/// Word (.docx) output, built with `docx-rs` from the blocks that
+/// `htmltext::extract_blocks` returns (the extractor `TxtOutput` also uses).
 ///
-/// `docx-rs` ships with its `image` feature (auto-detecting an embedded
-/// image's format/dimensions via the `image` crate) on by default; this
-/// crate depends on it with `default-features = false` instead; and
-/// `image_dimensions` below hand-rolls PNG/JPEG dimension reading, since
-/// the underlying `Pic::new_with_dimensions` API doesn't actually need the
-/// `image` crate at all - only `Pic::new`'s auto-detection convenience
-/// does. Checked with `cargo tree` before committing to this: `image`
-/// pulls in its own decoders for a dozen formats plus a *second*,
-/// independent copy of the `zip` crate (docx-rs's own container writer
-/// already needs one) - meaningful build-time and static-lib-size weight
-/// for a feature this plugin only needs for two formats.
+/// `docx-rs` is used without its default `image` feature. That feature
+/// pulls in decoders for a dozen formats and a second copy of the `zip`
+/// crate, only to detect image sizes. `image_dimensions` below reads PNG
+/// and JPEG sizes directly, which is all the cover needs.
 ///
-/// No TOC concept, matching `DocxConverter.swift` exactly - it never had a
-/// `generateTOC` parameter, so `DocxOutput` reads `include_cover` and
-/// ignores `generate_table_of_contents` entirely. And, carried over
-/// verbatim from the Swift original's own documented decision (verified
-/// working correctly in real Word before this port, not a gap): no
-/// synthetic chapter-title paragraph is added from the TOC, because each
-/// chapter's own XHTML `<h1>` already becomes a heading via
-/// `htmltext::extract_blocks`, and adding a second TOC-derived title
-/// produced a visibly duplicated heading.
+/// There is no TOC: the plugin reads `include_cover` and ignores
+/// `generate_table_of_contents`. It also adds no chapter-title paragraph
+/// from the TOC, because each chapter's own `<h1>` already becomes a
+/// heading, and a second title showed as a duplicated heading in Word.
 pub struct DocxOutput;
 
 impl OutputPlugin<DocumentIR> for DocxOutput {
@@ -120,9 +104,8 @@ fn fit_to_text_area(width_px: u32, height_px: u32) -> (u32, u32) {
 }
 
 fn heading_half_points(level: u8) -> usize {
-    // 6 levels, stepping down from 32pt to 14pt - half-points per docx-rs's
-    // Style::size/Run::size convention (48 half-points = 24pt, matching
-    // the Swift original's title styling).
+    // Six levels from 32pt down to 14pt, in half-points as docx-rs's
+    // `Style::size` expects (the title uses 48 = 24pt).
     match level {
         1 => 64,
         2 => 56,

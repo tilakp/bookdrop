@@ -10,10 +10,9 @@ fn fixtures_dir() -> PathBuf {
 /// Parses `fixture`, converts it to a fresh temp `.epub` via the full
 /// registry (proving the plugin is actually wired into `document_registry`,
 /// not just directly constructible), re-parses the result with `EpubInput`,
-/// and returns both IRs. `name` keeps the temp filename unique per test
-/// (see `pdf_tests.rs`/`real_book_tests.rs` for this session's established
-/// convention - `std::process::id()` alone isn't unique enough since
-/// `cargo test` runs tests in parallel within one process).
+/// and returns both IRs. `name` keeps the temp filename unique per test:
+/// `std::process::id()` alone is not enough, because `cargo test` runs
+/// tests in parallel in one process.
 fn round_trip(name: &str, fixture: &str) -> (DocumentIR, DocumentIR) {
     let before = EpubInput.convert(&fixtures_dir().join(fixture), &Options::new(), &StdLog).expect("fixture should parse");
 

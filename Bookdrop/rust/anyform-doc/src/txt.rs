@@ -5,14 +5,9 @@ use anyform_core::{ConvError, Log, Options, OutputPlugin};
 use crate::htmltext;
 use crate::ir::DocumentIR;
 
-/// Plain-text output - the Rust port of Bookdrop's Swift `TxtConverter`.
-/// Behavioral note carried over from the Swift original (see its own
-/// implementation plan, Risk 5): `NSAttributedString`'s HTML import did
-/// full layout-aware text extraction; `htmltext::extract_text` won't match
-/// it whitespace-for-whitespace. The Swift tests never asserted exact
-/// whitespace either, only presence of the right text plus "no `<`/`>`
-/// characters anywhere in the output" - match those assertions, not exact
-/// bytes.
+/// Plain-text output, from `htmltext::extract_text`. The extraction is not
+/// layout-aware, so whitespace can differ from what a browser shows. Tests
+/// check the words and that no markup remains, not exact bytes.
 pub struct TxtOutput;
 
 impl OutputPlugin<DocumentIR> for TxtOutput {

@@ -101,9 +101,8 @@ fn real_book_converts_with_all_images_inlined() {
     let html = convert("real-book", "doctor-dolittle.epub");
     let inlined = html.matches("data:image/").count();
     assert!(inlined >= 10, "expected at least 10 inlined images, got {inlined}");
-    // Some source markup carries id="foo.jpg"-shaped attributes unrelated
-    // to src= (found empirically on this exact book), so check src=
-    // specifically rather than any occurrence of the extension.
+    // This book has id="foo.jpg"-style attributes that are not image
+    // references, so check src= specifically, not any ".jpg".
     assert!(!has_unrewritten_src(&html, "jpg"), "no residual external src=\"...jpg\" should remain");
     assert!(!has_unrewritten_src(&html, "png"), "no residual external src=\"...png\" should remain");
 }

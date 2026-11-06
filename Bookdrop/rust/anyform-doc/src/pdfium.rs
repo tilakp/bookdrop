@@ -1,35 +1,16 @@
-//! The only module in this crate that touches the pdfium FFI. Everything
-//! else (`pdf_layout.rs`'s heuristics, `pdf_input.rs`'s orchestration) works
-//! on the plain owned structs this module produces - see the PDF-input
-//! plan's §2 for why that split exists (testability: `pdf_layout.rs` needs
-//! no bundled dylib to unit-test).
+//! The only module that calls pdfium. Everything else works on the plain
+//! structs it returns, so `pdf_layout.rs` can be tested without the dylib.
 //!
-//! Binding and path resolution mirror `resolve_boko_path` in `kindle.rs`
-//! and `resolve_chromium_path` in `pdf.rs` exactly: an explicit `opts`
-//! value wins, then an env var, then the vendored dev-tree copy so `cargo
-//! test`/`anyform-cli` work without going through `build-app.sh`.
+//! Library lookup matches `kindle.rs` and `pdf/mod.rs`: the `pdfium_path`
+//! option, then `ANYFORM_PDFIUM_PATH`, then the vendored dev-tree copy.
 //!
-//! Thread safety: `pdfium-render`'s `thread_safe` feature (enabled in
-//! `Cargo.toml`) claims to serialize every FFI call behind its own internal
-//! mutex - see that crate's README "Multi-threading" section - but this was
-//! verified empirically insufficient: a test that opens/extracts from
-//! separate `PdfDocument`s on four real concurrent threads reliably
-//! segfaults/traps with only that feature relied on. Whatever the internal
-//! mutex actually covers, it does not make the coarser "open a document,
-//! extract every page, drop the document" sequence safe against another
-//! thread doing the same for a *different* document at the same time -
-//! plausibly a `Drop`-ordering or shared-global-state issue inside pdfium
-//! itself that per-call locking doesn't reach. `EXTRACT_LOCK` below fixes
-//! this the blunt way: the entire `extract()` body runs under one
-//! process-wide lock, so pdfium genuinely never sees concurrent work,
-//! regardless of what pdfium-render's own locking grants. Cheap in
-//! practice - the app converts one file at a time anyway
-//! (`MultiConversionModel.run` is a plain sequential loop) - and
-//! `concurrent_pdf_conversions_do_not_crash_pdfium` in
-//! `pdf_input_tests.rs` exists specifically to keep this regression-tested,
-//! since `cargo test` alone (parallel *tests*, but each usually a single
-//! PDF) did not reliably reproduce the crash - only genuinely concurrent
-//! multi-thread use inside one test did.
+//! Thread safety: `pdfium-render`'s `thread_safe` feature locks each FFI
+//! call, but that is not enough. Four threads that open and read different
+//! documents at the same time crash reliably. So all of `extract()` runs
+//! under one process-wide lock (`EXTRACT_LOCK`). That costs little,
+//! because the app converts one file at a time.
+//! `concurrent_pdf_conversions_do_not_crash_pdfium` keeps this tested:
+//! ordinary parallel tests, one PDF each, did not reproduce the crash.
 
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
@@ -104,9 +85,8 @@ pub(crate) struct DocumentProbe {
 }
 
 /// Opens `path`, reads metadata/outline, and extracts every page's
-/// positioned text into plain `PageText`/`Glyph` values. Maps every pdfium
-/// failure mode to the exact §4 error table in the PDF-input plan at this
-/// boundary, so `pdf_input.rs` never has to match on `PdfiumError` itself.
+/// positioned text into plain `PageText`/`Glyph` values. pdfium errors
+/// become `ConvError`s here, so `pdf_input.rs` never sees `PdfiumError`.
 pub(crate) fn extract(path: &Path, opts: &Options, log: &dyn Log) -> Result<DocumentProbe, ConvError> {
     // Poisoning would only happen if a prior call panicked while holding
     // the lock; recovering the guard anyway is correct here since pdfium's

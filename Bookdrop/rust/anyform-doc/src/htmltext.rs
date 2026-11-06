@@ -1,15 +1,11 @@
-//! Shared "XHTML chapter → structured text" extraction used by `txt.rs` and
-//! (Phase 4) `docx.rs`. `html.rs`/`epub_output.rs` don't need this - they
-//! preserve or emit markup directly rather than extracting text from it.
+//! Turns chapter XHTML into structured text for `txt.rs` and `docx.rs`.
+//! (`html.rs` and `epub_output.rs` keep the markup itself.)
 //!
-//! Roxmltree fast path, regex fallback: EPUB chapters are XHTML by spec, so
-//! the primary path reuses `epub::parse_xml` (exact, entity-correct for XML
-//! builtins, no new dependency) and walks the DOM. Two things break it in
-//! the wild: HTML named entities not declared in any DOCTYPE (`&nbsp;`,
-//! `&mdash;`), and genuinely non-well-formed markup from bad producers. The
-//! fallback (already-present `regex` dependency) handles both, at the cost
-//! of losing heading-level/bold/italic fidelity - acceptable since it's a
-//! rare path, not the common case.
+//! The main path parses with roxmltree (`epub::parse_xml`) and walks the
+//! DOM. Two things break it in real books: HTML named entities that no
+//! DOCTYPE declares (`&nbsp;`, `&mdash;`), and markup that is not well
+//! formed. A regex fallback handles both, but loses heading levels and
+//! bold/italic. That is acceptable for a rare path.
 
 use std::sync::OnceLock;
 
@@ -176,14 +172,10 @@ struct FallbackRegexes {
 fn fallback_regexes() -> &'static FallbackRegexes {
     static REGEXES: OnceLock<FallbackRegexes> = OnceLock::new();
     REGEXES.get_or_init(|| FallbackRegexes {
-        // Rust's `regex` crate has no backreference support, so this can't
-        // require the closing tag to match the same name as the opener -
-        // matches each element as its own alternative instead. Drops
-        // <head>...</head> wholesale (not just <script>/<style>) - the
-        // roxmltree fast path already skips head/title via SKIP_TAGS, and
-        // without this the fallback leaked <title> text into the visible
-        // body (found empirically: "Chapter One" appeared twice, once from
-        // <title>, once from the real <h1>).
+        // The `regex` crate has no backreferences, so each element is its
+        // own alternative. All of <head> is dropped, not only <script> and
+        // <style>: otherwise <title> text leaked into the body, and
+        // "Chapter One" appeared twice (from <title> and from <h1>).
         strip_blocks: Regex::new(r"(?is)<script\b[^>]*>.*?</script>|<style\b[^>]*>.*?</style>|<head\b[^>]*>.*?</head>").unwrap(),
         block_break: Regex::new(r"(?i)</(p|h[1-6]|li|div|blockquote|section|article)\s*>|<br\s*/?>").unwrap(),
         tag: Regex::new(r"<[^>]*>").unwrap(),

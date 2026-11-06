@@ -28,23 +28,15 @@ use crate::ir::{DocumentIR, Resource, TocNode};
 /// IR at all - a fresh deterministic one is minted instead, see
 /// `deterministic_identifier`).
 ///
-/// Verified against `epubcheck` (manually, not gated in CI): the package
-/// document/nav/ncx this plugin generates are fully EPUB3-valid on their
-/// own (a `minimal.epub` round trip produces zero epubcheck errors). A
-/// real, EPUB2-authored book (`origin-of-species.epub`, declares
-/// `version="2.0"`) round-trips with 59 epubcheck errors - all in chapter
-/// XHTML copied byte-for-byte per this plugin's "faithful repackage, not
-/// rebuild" design (D7 in the implementation plan), none in generated
-/// files. Root cause: this plugin always declares `version="3.0"` (needed
-/// for the nav document EPUB3 requires), so epubcheck applies EPUB3's
-/// stricter content-document rules (HTML5 `<!DOCTYPE html>` required) to
-/// XHTML 1.1-doctype content that was valid under the source's own EPUB2
-/// rules. Rewriting chapter DOCTYPEs to "fix" this would mean no longer
-/// copying content byte-for-byte - the same class of risk as the
-/// pagination-collapse bug from renaming files/changing parse mode earlier
-/// this session - so it's accepted as a known limitation rather than
-/// "fixed" here. Real readers (Apple Books, Calibre) are broadly tolerant
-/// of this in practice; epubcheck's EPUB3.3 ruleset is strict about it.
+/// Checked with `epubcheck` (by hand, not in CI). The generated OPF, nav
+/// and ncx are valid EPUB3: a `minimal.epub` round trip has zero errors.
+/// An EPUB2 book (`origin-of-species.epub`) round-trips with 59 errors,
+/// all in chapter XHTML that is copied unchanged. This plugin declares
+/// `version="3.0"` (EPUB3 needs the nav document), so epubcheck applies
+/// EPUB3 content rules, such as the HTML5 doctype, to XHTML 1.1 chapters
+/// that were valid EPUB2. Rewriting chapter doctypes would end the
+/// byte-for-byte copy that keeps fidelity, so this is a known limitation.
+/// Apple Books and calibre read these files without problems.
 pub struct EpubOutput;
 
 impl OutputPlugin<DocumentIR> for EpubOutput {

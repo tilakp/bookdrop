@@ -1,12 +1,10 @@
-//! C ABI surface for the `anyform` engine — the boundary Bookdrop's Swift
-//! app calls into (plan Phase 3/4). Uses JSON for all structured data
-//! rather than mirrored C structs: far less ABI-fragile, and keeps Swift's
-//! existing `Book`/`PDFOptions` types as the source of truth (Swift decodes
-//! JSON into its own types; Rust never needs to know their exact layout).
+//! C ABI for the `anyform` engine, called by the Swift app. Structured
+//! data crosses as JSON, not as mirrored C structs: that is far less
+//! fragile, and the Swift types stay the source of truth.
 //!
-//! Header is generated with `cbindgen --crate anyform-ffi --output
-//! include/anyform.h` (run manually, not on every build — see
-//! `rust/anyform-ffi/README.md`).
+//! After a change to the C API, regenerate the header with `cbindgen
+//! --crate anyform-ffi --output include/anyform.h`, copy it to
+//! `Sources/CAnyform/include/`, and run `scripts/build-ffi.sh`.
 
 use std::ffi::{c_char, c_void, CStr, CString};
 use std::path::PathBuf;

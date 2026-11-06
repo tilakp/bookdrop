@@ -3,11 +3,10 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use anyform_core::{ConvError, Log, Options, StdLog, Value};
 
-/// Requires the vendored chrome-headless-shell binary — run
-/// `rust/scripts/fetch-chromium.sh` once before `cargo test` (see plan
-/// Phase 2). These are integration tests against the real bundled
-/// renderer, not mocked, since the whole point of this phase is proving
-/// the bundled-Chromium pipeline actually produces a valid PDF.
+/// Needs the vendored chrome-headless-shell binary: run
+/// `rust/scripts/fetch-chromium.sh` once before `cargo test`. These tests
+/// use the real bundled renderer, not a mock, because what they prove is
+/// that the bundled Chromium pipeline makes a valid PDF.
 fn fixture_path() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/minimal.epub")
 }

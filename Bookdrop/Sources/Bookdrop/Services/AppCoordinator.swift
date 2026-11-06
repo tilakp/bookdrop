@@ -156,7 +156,8 @@ final class AppCoordinator: ObservableObject {
     /// (bypassing the `Task` wrapper `startConversion` uses for fire-and-forget UI calls).
     func performConversion(book: Book, outputURL: URL, progress: ConversionProgress) async {
         do {
-            let resultURL = try await convert(book: book, outputURL: outputURL, progress: progress)
+            let resultURL = try await RustConversionEngine.convert(
+                book: book, options: pdfOptions, outputURL: outputURL, progress: progress)
             let pageCount = outputFormat == .pdf ? PDFDocument(url: resultURL)?.pageCount : nil
             let info = CompletionInfo(outputURL: resultURL, pageCount: pageCount)
             historyStore.add(
@@ -199,15 +200,5 @@ final class AppCoordinator: ObservableObject {
                 message: "Couldn't convert this book.", hint: nil,
                 technicalDetails: String(describing: error))
         }
-    }
-
-    private func convert(book: Book, outputURL: URL, progress: ConversionProgress) async throws -> URL {
-        // Every output format now goes through the Rust engine (Phase 6 —
-        // see ANYFORM-FULL-SPEC.md). Dispatch is by the output path's
-        // extension, on the Rust side (Registry::convert in
-        // anyform-core), so this Swift call is already fully generic —
-        // see RustConversionEngine.swift's doc comment.
-        try await RustConversionEngine.convert(
-            book: book, options: pdfOptions, outputURL: outputURL, progress: progress)
     }
 }

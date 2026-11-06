@@ -9,17 +9,12 @@ use crate::ir::DocumentIR;
 
 use super::RenderOptions;
 
-/// Post-merge overlay pass for page numbers / running header / running
-/// footer — done here (rather than via Chrome's own per-chapter
-/// `headerTemplate`/`footerTemplate`) because each chapter is rendered as
-/// a *separate* `print_to_pdf` call: Chrome's built-in page-number
-/// substitution would restart at 1 for every chapter instead of counting
-/// across the whole merged book. Mirrors Swift `PdfConverter.decoratePages`
-/// (draw over each final page, book title top/bottom-center, page number
-/// bottom-center) but as PDF content-stream operators instead of Core
-/// Graphics, and with an approximate (not glyph-metric-exact) text width
-/// for centering — close enough for short header/footer/page-number
-/// strings at 8pt.
+/// Draws page numbers and the running header/footer over the merged
+/// document. Chrome's `headerTemplate`/`footerTemplate` cannot do this:
+/// each chapter is a separate `print_to_pdf` call, so its page numbers
+/// would restart at 1 in every chapter. The text width for centering is an
+/// estimate, not real glyph metrics, which is close enough for short 8pt
+/// strings.
 pub(super) fn add_page_decorations(doc: &mut lopdf::Document, opts: &RenderOptions, book_title: &str) -> Result<(), ConvError> {
     if !(opts.show_page_numbers || opts.include_headers || opts.include_footers) {
         return Ok(());

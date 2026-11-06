@@ -12,11 +12,9 @@ use crate::ir::TocNode;
 
 use super::RenderOptions;
 
-/// Regexes used to strip the EPUB's own CSS when `!preserve_epub_styling ||
-/// remove_publisher_styling` — mirrors the DOM-query removal Swift's
-/// `PdfConverter.typographyInjectionScript` does via injected JS, just as
-/// text surgery on the raw (XHTML-so-lowercase-tag) markup instead of a
-/// live DOM.
+/// Regexes that strip the book's own CSS when `!preserve_epub_styling ||
+/// remove_publisher_styling`. Text surgery on the raw markup is enough:
+/// XHTML tag names are always lowercase.
 struct StyleStripRegexes {
     style_tag: Regex,
     link_tag: Regex,
@@ -34,28 +32,18 @@ fn style_strip_regexes() -> &'static StyleStripRegexes {
     })
 }
 
-/// Writes a version of `original` with typography overrides injected (and,
-/// if requested, the EPUB's own styling stripped) to a sibling temp file,
-/// returning its path — or `original` unchanged if no overrides apply, so
-/// callers can skip cleanup in that case.
-/// Overwrites `original` in place with typography overrides injected (and,
-/// if requested, the EPUB's own styling stripped), returning the original
-/// bytes so the caller can restore them after rendering. Each chapter has
-/// its own unique source file and worker threads process disjoint spine
-/// indices, so no two workers ever touch the same path concurrently.
+/// Overwrites `original` in place with the typography overrides (and, if
+/// requested, without the book's own styling) and returns the original
+/// bytes, so the caller can restore them after rendering. Each worker
+/// thread has different spine items, so no two threads write one file.
 ///
-/// Rendering in place (same filename, same directory - not a renamed
-/// sibling temp file, which an earlier version of this used) matters for
-/// more than avoiding a rename: EPUB footnote/cross-reference links are
-/// written as `<a href="thisfile.xhtml#note3">` even when the target is
-/// in the very file being linked from, and Chrome only recognizes a
-/// fragment link as same-document navigation (producing a working
-/// `/Dest`) when the href resolves to the *exact* URL of the page
-/// actually loaded - confirmed empirically: pointing Chrome at a renamed
-/// copy of a file whose own links reference the original filename turned
-/// every internal link, including same-chapter ones, into a dead `file://`
-/// URI post-merge. See `namespace_chapter_dests`/`fix_cross_chapter_links`
-/// for how the resulting links are carried through the merge.
+/// The file is changed in place, not copied to a new name, because of
+/// footnote links. EPUB writes them as `<a href="thisfile.xhtml#note3">`
+/// even inside the same file, and Chrome makes a working `/Dest` only when
+/// that href resolves to the exact URL of the loaded page. With a renamed
+/// copy, every internal link became a dead `file://` URI. See
+/// `namespace_chapter_dests` and `fix_cross_chapter_links` for how the
+/// links survive the merge.
 pub(super) fn prepare_chapter_html(original: &Path, opts: &RenderOptions, toc_fragments: &[String]) -> Result<Vec<u8>, ConvError> {
     let original_bytes = std::fs::read(original)
         .map_err(|e| ConvError::Other(format!("failed to read {}: {e}", original.display())))?;

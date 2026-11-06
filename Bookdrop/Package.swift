@@ -2,13 +2,11 @@
 import Foundation
 import PackageDescription
 
-// The prebuilt Rust engine (see rust/README.md) — built by
-// rust/scripts/build-ffi.sh into rust/target/universal/libanyform_ffi.a,
-// linked directly (not via .binaryTarget/.xcframework — a plain C target +
-// linker flags proved simpler and more robust for a static lib with a
-// hand-written C ABI, see plan Phase 4). Resolved from this manifest's own
-// path so it works regardless of the working directory `swift build` is
-// invoked from.
+// The prebuilt Rust engine: rust/scripts/build-ffi.sh writes
+// rust/target/universal/libanyform_ffi.a, linked here with plain linker
+// flags (a C target plus -l is simpler than a .binaryTarget for one static
+// library). The path is relative to this manifest, so `swift build` works
+// from any directory.
 let packageDir = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
 let rustLibDir = packageDir.appendingPathComponent("rust/target/universal").path
 
