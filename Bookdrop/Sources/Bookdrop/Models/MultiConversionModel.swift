@@ -96,7 +96,7 @@ final class MultiConversionModel: ObservableObject {
                         conversionLabel: "\(book.sourceURL.pathExtension.uppercased()) → \(format.rawValue)",
                         outputPath: resultURL.path, sourcePath: sourceURL.path))
             } catch {
-                let cancelled = isCancelled || error is CancellationError
+                let cancelled = isCancelled || error is CancellationError || (error as? EngineError)?.isCancellation == true
                 jobs[index].status = .failed(cancelled ? "Cancelled" : error.localizedDescription)
             }
         }

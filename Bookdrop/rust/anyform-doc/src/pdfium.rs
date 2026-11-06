@@ -56,12 +56,16 @@ static EXTRACT_LOCK: Mutex<()> = Mutex::new(());
 /// `resolve_boko_path` is also only meaningfully consulted once per process
 /// in practice (the app always passes the same bundled path).
 fn bindings(opts: &Options) -> Result<&'static Pdfium, ConvError> {
-    let result = PDFIUM.get_or_init(|| {
-        let path = resolve_pdfium_path(opts)?;
-        let lib = Pdfium::bind_to_library(&path).map_err(|e| format!("failed to load the bundled PDF reader: {e}"))?;
-        Ok(Pdfium::new(lib))
-    });
-    result.as_ref().map_err(|e| ConvError::Other(e.clone()))
+    // A missing library is reported without being cached, so a later call
+    // that passes the right `pdfium_path` still succeeds.
+    if PDFIUM.get().is_none() {
+        let path = resolve_pdfium_path(opts).map_err(ConvError::ToolMissing)?;
+        PDFIUM.get_or_init(|| {
+            let lib = Pdfium::bind_to_library(&path).map_err(|e| format!("failed to load the bundled PDF reader: {e}"))?;
+            Ok(Pdfium::new(lib))
+        });
+    }
+    PDFIUM.get().expect("set above").as_ref().map_err(|e| ConvError::Other(e.clone()))
 }
 
 fn resolve_pdfium_path(opts: &Options) -> Result<PathBuf, String> {
@@ -142,11 +146,7 @@ fn clean_metadata_string(value: Option<String>) -> Option<String> {
 
 fn map_open_error(e: PdfiumError) -> ConvError {
     if matches!(e, PdfiumError::PdfiumLibraryInternalError(PdfiumInternalError::PasswordError)) {
-        return ConvError::Other(
-            "This PDF is password-protected, so it can't be converted. \
-             Open it with the password, save an unprotected copy, and convert that."
-                .into(),
-        );
+        return ConvError::PasswordProtected;
     }
     ConvError::Malformed(format!("PDF: {e}"))
 }

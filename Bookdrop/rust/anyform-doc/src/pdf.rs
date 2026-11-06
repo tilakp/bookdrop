@@ -41,7 +41,7 @@ impl OutputPlugin<DocumentIR> for PdfOutput {
 
     fn convert(&self, ir: &DocumentIR, output: &Path, opts: &Options, log: &dyn Log) -> Result<(), ConvError> {
         if ir.spine.is_empty() {
-            return Err(ConvError::Other("book has no chapters to render".into()));
+            return Err(ConvError::NoChapters);
         }
 
         let render_opts = RenderOptions::from_options(opts);
@@ -578,7 +578,7 @@ fn resolve_chromium_path(opts: &Options) -> Result<PathBuf, ConvError> {
         return Ok(dev_path);
     }
 
-    Err(ConvError::Other(
+    Err(ConvError::ToolMissing(
         "no bundled Chromium binary found — set the \"chromium_path\" option, \
          ANYFORM_CHROMIUM_PATH, or run scripts/fetch-chromium.sh"
             .into(),

@@ -2,11 +2,12 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
-/// Errors surfaced anywhere in an input/output/transform pipeline.
+/// Errors from any input, output or transform plugin. One flat enum,
+/// because every plugin returns through `Registry::convert` and callers
+/// need one type to match on.
 ///
-/// Kept as one flat enum (rather than per-plugin error types) since every
-/// plugin funnels into the same `Registry::convert` call site, and callers
-/// (the CLI today, the FFI layer later) need one thing to match on.
+/// The `Display` text says what went wrong. What the user can do about it
+/// is the host's job: the app maps `code()` to its own advice.
 #[derive(thiserror::Error, Debug)]
 pub enum ConvError {
     #[error("I/O error: {0}")]
@@ -23,8 +24,44 @@ pub enum ConvError {
     Malformed(String),
     #[error("conversion was cancelled")]
     Cancelled,
+    #[error("This book is DRM-protected, so it can't be converted.")]
+    DrmProtected,
+    #[error("This PDF is password-protected, so it can't be converted.")]
+    PasswordProtected,
+    #[error("This PDF has no selectable text. It is a scan or a photo of pages.")]
+    ScannedPdf,
+    #[error("This PDF has a multi-column layout, which Bookdrop can't reflow yet.")]
+    MultiColumnPdf,
+    #[error("This book has no readable chapters.")]
+    NoChapters,
+    /// A bundled helper program (Chromium, pdfium, boko) was not found.
+    #[error("{0}")]
+    ToolMissing(String),
     #[error("{0}")]
     Other(String),
+}
+
+impl ConvError {
+    /// A stable identifier for hosts. It crosses the FFI as `"code"`, so
+    /// renaming one is a breaking change for the app.
+    pub fn code(&self) -> &'static str {
+        match self {
+            ConvError::Io(_) => "io",
+            ConvError::NoInputPlugin(_) => "unsupported_input",
+            ConvError::NoOutputPlugin(_) => "unsupported_output",
+            ConvError::InvalidArchive => "invalid_archive",
+            ConvError::MissingFile(_) => "missing_file",
+            ConvError::Malformed(_) => "malformed",
+            ConvError::Cancelled => "cancelled",
+            ConvError::DrmProtected => "drm_protected",
+            ConvError::PasswordProtected => "password_protected",
+            ConvError::ScannedPdf => "scanned_pdf",
+            ConvError::MultiColumnPdf => "multi_column_pdf",
+            ConvError::NoChapters => "no_chapters",
+            ConvError::ToolMissing(_) => "tool_missing",
+            ConvError::Other(_) => "other",
+        }
+    }
 }
 
 /// Doubles as the plugin↔host callback channel: logging, fractional

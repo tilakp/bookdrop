@@ -24,7 +24,7 @@ use std::path::Path;
 use anyform_core::{ConvError, InputPlugin, Log, Options};
 
 use crate::ir::{DocumentIR, Metadata, Resource, SpineItem, TocNode};
-use crate::pdf_layout::{self, ColumnVerdict};
+use crate::pdf_layout;
 use crate::pdfium::{self, DocumentProbe};
 
 /// Below this average characters-per-page, combined with a high image-area
@@ -71,7 +71,7 @@ impl InputPlugin<DocumentIR> for PdfInput {
         let title = resolve_title(&probe, input);
 
         let chapters = pdf_layout::build_chapters(&probe.pages, &probe.outline, &title, force_single_column, log)
-            .map_err(|verdict| ConvError::Other(describe_column_rejection(verdict)))?;
+            .map_err(|_| ConvError::MultiColumnPdf)?;
 
         if chapters.is_empty() || chapters.iter().all(|c| c.blocks.is_empty()) {
             return Err(ConvError::Other("This PDF's text couldn't be read in a sensible order.".into()));
@@ -120,30 +120,16 @@ impl InputPlugin<DocumentIR> for PdfInput {
 fn reject_if_scanned(probe: &DocumentProbe) -> Result<(), ConvError> {
     let total_chars: usize = probe.pages.iter().map(|p| p.glyphs.len()).sum();
     if total_chars == 0 {
-        return Err(scanned_pdf_error());
+        return Err(ConvError::ScannedPdf);
     }
     let mean_image_ratio = probe.pages.iter().map(|p| p.image_area_ratio).sum::<f32>() / probe.page_count.max(1) as f32;
     let chars_per_page = total_chars / probe.page_count.max(1);
     if chars_per_page < SCANNED_CHARS_PER_PAGE_THRESHOLD && mean_image_ratio > SCANNED_IMAGE_RATIO_THRESHOLD {
-        return Err(scanned_pdf_error());
+        return Err(ConvError::ScannedPdf);
     }
     Ok(())
 }
 
-fn scanned_pdf_error() -> ConvError {
-    ConvError::Other(
-        "This PDF has no selectable text — it's a scan or a photo of pages. \
-         Bookdrop can't read text from images yet."
-            .into(),
-    )
-}
-
-fn describe_column_rejection(verdict: ColumnVerdict) -> String {
-    let _ = verdict; // the message doesn't currently vary by column count
-    "This PDF has a multi-column layout, which Bookdrop can't reflow yet — \
-     converting it would scramble the text into the wrong order."
-        .into()
-}
 
 /// PDF `Info` dictionary titles are notoriously unreliable (often empty, a
 /// bare filename, or a producer-app default like "Microsoft Word - foo").

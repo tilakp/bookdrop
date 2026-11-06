@@ -26,7 +26,7 @@ impl OutputPlugin<DocumentIR> for TxtOutput {
 
     fn convert(&self, ir: &DocumentIR, output: &Path, _opts: &Options, log: &dyn Log) -> Result<(), ConvError> {
         if ir.spine.is_empty() {
-            return Err(ConvError::Other("This book has no readable chapters.".into()));
+            return Err(ConvError::NoChapters);
         }
 
         let total = ir.spine.len();

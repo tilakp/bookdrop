@@ -1,19 +1,19 @@
 import CAnyform
 import Foundation
 
-enum BookLoadError: LocalizedError, Equatable {
-    case unsupportedFormat(String)
-    case unreadable(String)
+/// A file the app does not try to open. Errors from reading a supported
+/// file are `EngineError`s.
+struct UnsupportedFormatError: LocalizedError, Equatable {
+    let fileExtension: String
 
     var errorDescription: String? {
-        switch self {
-        case .unsupportedFormat(let ext):
-            return ext.isEmpty
-                ? "Bookdrop can't open files without an extension."
-                : "Bookdrop can't open .\(ext) files."
-        case .unreadable(let detail):
-            return detail.isEmpty ? "This book couldn't be read." : detail
-        }
+        fileExtension.isEmpty
+            ? "Bookdrop can't open files without an extension."
+            : "Bookdrop can't open .\(fileExtension) files."
+    }
+
+    var recoverySuggestion: String? {
+        "Bookdrop opens EPUB, Kindle (AZW3, AZW, KFX, MOBI) and PDF files."
     }
 }
 
@@ -31,7 +31,7 @@ enum BookLoader {
     /// seconds to read, and the UI must stay responsive meanwhile.
     static func load(_ url: URL) async throws -> Book {
         guard isSupported(url) else {
-            throw BookLoadError.unsupportedFormat(url.pathExtension.lowercased())
+            throw UnsupportedFormatError(fileExtension: url.pathExtension.lowercased())
         }
         return try await Task.detached(priority: .userInitiated) { try parse(url) }.value
     }
@@ -42,13 +42,13 @@ enum BookLoader {
         let result = url.path.withCString { path in
             optionsJSON.withCString { options in anyform_parse_book(path, options) }
         }
-        guard let result else { throw BookLoadError.unreadable("") }
+        guard let result else { throw EngineError.decode(nil) }
         defer { anyform_free_string(result) }
 
-        let parsed = try? JSONDecoder().decode(ParseResult.self, from: Data(String(cString: result).utf8))
-        guard let parsed, parsed.status == "ok", let info = parsed.book else {
-            throw BookLoadError.unreadable(parsed?.message ?? "")
-        }
+        let json = String(cString: result)
+        guard let parsed = try? JSONDecoder().decode(ParseResult.self, from: Data(json.utf8)),
+            parsed.status == "ok", let info = parsed.book
+        else { throw EngineError.decode(json) }
         return Book(
             title: info.title,
             author: info.author,
@@ -64,7 +64,6 @@ enum BookLoader {
 private struct ParseResult: Decodable {
     let status: String
     let book: BookInfo?
-    let message: String?
 }
 
 private struct BookInfo: Decodable {

@@ -47,7 +47,7 @@ impl OutputPlugin<DocumentIR> for DocxOutput {
 
     fn convert(&self, ir: &DocumentIR, output: &Path, opts: &Options, log: &dyn Log) -> Result<(), ConvError> {
         if ir.spine.is_empty() {
-            return Err(ConvError::Other("This book has no readable chapters.".into()));
+            return Err(ConvError::NoChapters);
         }
         let include_cover = opts.get_bool("include_cover", true);
 

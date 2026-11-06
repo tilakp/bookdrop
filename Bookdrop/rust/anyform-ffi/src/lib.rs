@@ -110,25 +110,43 @@ impl From<&DocumentIR> for BookInfo {
     }
 }
 
+/// An error as the host sees it: `code` is `ConvError::code()` (or
+/// "invalid_argument" / "internal" for failures in this layer), `message`
+/// is the text to show.
+#[derive(Serialize)]
+struct WireError {
+    code: &'static str,
+    message: String,
+}
+
+impl From<anyform_core::ConvError> for WireError {
+    fn from(e: anyform_core::ConvError) -> Self {
+        WireError { code: e.code(), message: e.to_string() }
+    }
+}
+
+impl WireError {
+    fn invalid_argument(message: String) -> Self {
+        WireError { code: "invalid_argument", message }
+    }
+}
+
 #[derive(Serialize)]
 #[serde(tag = "status", rename_all = "lowercase")]
 enum ParseResult {
     Ok { book: BookInfo },
-    Error { message: String },
+    Error(WireError),
 }
 
 #[derive(Serialize)]
 #[serde(tag = "status", rename_all = "lowercase")]
 enum ErrorResult {
-    Error { message: String },
+    Error(WireError),
 }
 
-/// Parses any registered input format — EPUB, Kindle-family, or PDF, not
-/// just EPUB despite the name this replaced (`anyform_parse_epub`; it was
-/// never actually EPUB-specific, since `registry.parse` dispatches by the
-/// input path's extension the same way `registry.convert` does) — and
-/// returns Book-info JSON (`{"status":"ok","book":{...}}` or
-/// `{"status":"error","message":"..."}`) for the UI's file-loaded panel.
+/// Parses any registered input format (EPUB, Kindle, PDF) and returns
+/// `{"status":"ok","book":{...}}` or
+/// `{"status":"error","code":"...","message":"..."}`.
 /// Caller must free the returned pointer with `anyform_free_string`.
 ///
 /// `options_json` may be null; it carries the same tool paths
@@ -139,19 +157,19 @@ enum ErrorResult {
 /// must be null or a valid, NUL-terminated UTF-8 C string.
 #[no_mangle]
 pub unsafe extern "C" fn anyform_parse_book(path: *const c_char, options_json: *const c_char) -> *mut c_char {
-    let result: Result<BookInfo, String> = catch_panic(|| {
-        let path = c_str_to_pathbuf(path)?;
-        let opts = options_from_json(options_json)?;
+    let result: Result<BookInfo, WireError> = catch_panic(|| {
+        let path = c_str_to_pathbuf(path).map_err(WireError::invalid_argument)?;
+        let opts = options_from_json(options_json).map_err(WireError::invalid_argument)?;
         let registry = anyform_doc::document_registry();
-        let ir = registry.parse(&path, &opts, &anyform_core::StdLog).map_err(|e| e.to_string())?;
+        let ir = registry.parse(&path, &opts, &anyform_core::StdLog)?;
         Ok(BookInfo::from(&ir))
     });
 
     let payload = match result {
         Ok(book) => serde_json::to_string(&ParseResult::Ok { book }),
-        Err(message) => serde_json::to_string(&ParseResult::Error { message }),
+        Err(error) => serde_json::to_string(&ParseResult::Error(error)),
     }
-    .unwrap_or_else(|e| format!("{{\"status\":\"error\",\"message\":{:?}}}", e.to_string()));
+    .unwrap_or_else(|_| INTERNAL_ERROR_JSON.into());
 
     string_to_c(payload)
 }
@@ -193,7 +211,7 @@ pub unsafe extern "C" fn anyform_convert_start(
     let (input, output, opts) = match setup {
         Ok(v) => v,
         Err(message) => {
-            complete_with_error(on_complete, complete_ctx, message);
+            complete_with_error(on_complete, complete_ctx, WireError::invalid_argument(message));
             return token;
         }
     };
@@ -209,14 +227,14 @@ pub unsafe extern "C" fn anyform_convert_start(
         };
         let result = catch_panic(|| {
             let registry = anyform_doc::document_registry();
-            registry.convert(&input, &output, &opts, &log).map_err(|e| e.to_string())
+            Ok(registry.convert(&input, &output, &opts, &log)?)
         });
 
         // `on_complete` must fire exactly once whatever happened above: the
         // Swift side waits on it, and a missed call would hang the UI.
         match (on_complete, result) {
             (Some(cb), Ok(())) => cb(1, std::ptr::null(), complete_ctx_addr as *mut c_void),
-            (Some(_), Err(message)) => complete_with_error(on_complete, complete_ctx_addr as *mut c_void, message),
+            (Some(_), Err(error)) => complete_with_error(on_complete, complete_ctx_addr as *mut c_void, error),
             (None, _) => {}
         }
     });
@@ -224,10 +242,11 @@ pub unsafe extern "C" fn anyform_convert_start(
     token
 }
 
-fn complete_with_error(on_complete: Option<CompleteCallback>, ctx: *mut c_void, message: String) {
+const INTERNAL_ERROR_JSON: &str = r#"{"status":"error","code":"internal","message":"unknown error"}"#;
+
+fn complete_with_error(on_complete: Option<CompleteCallback>, ctx: *mut c_void, error: WireError) {
     if let Some(cb) = on_complete {
-        let json = serde_json::to_string(&ErrorResult::Error { message })
-            .unwrap_or_else(|_| "{\"status\":\"error\",\"message\":\"unknown error\"}".into());
+        let json = serde_json::to_string(&ErrorResult::Error(error)).unwrap_or_else(|_| INTERNAL_ERROR_JSON.into());
         let c_json = c_string_lossy(json);
         cb(0, c_json.as_ptr(), ctx);
     }
@@ -236,9 +255,10 @@ fn complete_with_error(on_complete: Option<CompleteCallback>, ctx: *mut c_void, 
 /// Runs `f`, turning a panic into an error. A panic must never unwind out
 /// of an `extern "C"` function (that aborts the whole app), and must never
 /// skip the completion callback (that hangs it).
-fn catch_panic<T>(f: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
-    std::panic::catch_unwind(std::panic::AssertUnwindSafe(f))
-        .unwrap_or_else(|_| Err("Bookdrop hit an internal error while reading this book.".to_string()))
+fn catch_panic<T>(f: impl FnOnce() -> Result<T, WireError>) -> Result<T, WireError> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)).unwrap_or_else(|_| {
+        Err(WireError { code: "internal", message: "Bookdrop hit an internal error while reading this book.".into() })
+    })
 }
 
 /// `CString::new` fails on an interior NUL (possible in text from a
@@ -324,4 +344,36 @@ fn string_to_c(s: String) -> *mut c_char {
 fn base64_encode(bytes: &[u8]) -> String {
     use base64::Engine;
     base64::engine::general_purpose::STANDARD.encode(bytes)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse(path: &str) -> serde_json::Value {
+        let path = CString::new(path).unwrap();
+        let raw = unsafe { anyform_parse_book(path.as_ptr(), std::ptr::null()) };
+        let json = unsafe { CStr::from_ptr(raw) }.to_str().unwrap().to_string();
+        unsafe { anyform_free_string(raw) };
+        serde_json::from_str(&json).unwrap()
+    }
+
+    #[test]
+    fn parse_errors_carry_a_code_and_a_message() {
+        let fixtures = concat!(env!("CARGO_MANIFEST_DIR"), "/../anyform-doc/tests/fixtures");
+        let encrypted = parse(&format!("{fixtures}/encrypted.pdf"));
+        assert_eq!(encrypted["status"], "error");
+        assert_eq!(encrypted["code"], "password_protected");
+        assert!(encrypted["message"].as_str().unwrap().contains("password-protected"));
+
+        let unknown = parse("/tmp/book.unknown-extension");
+        assert_eq!(unknown["code"], "unsupported_input");
+    }
+
+    #[test]
+    fn parse_success_returns_the_book() {
+        let book = parse(concat!(env!("CARGO_MANIFEST_DIR"), "/../anyform-doc/tests/fixtures/minimal.epub"));
+        assert_eq!(book["status"], "ok");
+        assert_eq!(book["book"]["title"], "Minimal Fixture Book");
+    }
 }

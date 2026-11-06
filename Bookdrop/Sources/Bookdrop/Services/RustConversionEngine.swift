@@ -1,20 +1,6 @@
 import CAnyform
 import Foundation
 
-enum RustConversionEngineError: LocalizedError {
-    case cancelled
-    case engine(String)
-
-    var errorDescription: String? {
-        switch self {
-        case .cancelled:
-            return "Conversion was cancelled."
-        case .engine(let message):
-            return message
-        }
-    }
-}
-
 /// Bridges the C callbacks (which can't capture Swift context — they're
 /// plain `@convention(c)` function pointers) to one in-flight conversion
 /// via an `Unmanaged` reference passed through as `ctx`. Not `@MainActor`
@@ -73,7 +59,7 @@ private final class ConversionContext: @unchecked Sendable {
         }
     }
 
-    func complete(success: Bool, message: String?) {
+    func complete(success: Bool, errorJSON: String?) {
         lock.lock()
         let continuation = self.continuation
         self.continuation = nil
@@ -87,9 +73,9 @@ private final class ConversionContext: @unchecked Sendable {
         if success {
             continuation?.resume()
         } else if cancelled {
-            continuation?.resume(throwing: RustConversionEngineError.cancelled)
+            continuation?.resume(throwing: EngineError.cancelled)
         } else {
-            continuation?.resume(throwing: RustConversionEngineError.engine(message ?? "Conversion failed"))
+            continuation?.resume(throwing: EngineError.decode(errorJSON))
         }
     }
 }
@@ -102,15 +88,6 @@ private func rustProgressCallback(
     context.reportProgress(fraction: fraction, stage: stage.map { String(cString: $0) } ?? "")
 }
 
-/// The Rust side's error payload is always `{"status":"error","message":"..."}`
-/// (`ErrorResult` in `anyform-ffi/src/lib.rs`) — decoded here so the user
-/// sees the actual message rather than the raw JSON blob. Falls back to
-/// the raw string if decoding ever fails, so a malformed payload still
-/// surfaces *something* rather than silently losing the error entirely.
-private struct RustErrorPayload: Decodable {
-    let message: String
-}
-
 private func rustCompleteCallback(
     _ success: Int32, _ errorJSON: UnsafePointer<CChar>?, _ ctx: UnsafeMutableRawPointer?
 ) {
@@ -119,12 +96,7 @@ private func rustCompleteCallback(
     // callback fires exactly once per conversion, so this is where the
     // context's retain count comes back down.
     let context = Unmanaged<ConversionContext>.fromOpaque(ctx).takeRetainedValue()
-    let rawJSON = errorJSON.map { String(cString: $0) }
-    let message = rawJSON.flatMap { json -> String? in
-        guard let data = json.data(using: .utf8) else { return nil }
-        return try? JSONDecoder().decode(RustErrorPayload.self, from: data).message
-    } ?? rawJSON
-    context.complete(success: success == 1, message: message)
+    context.complete(success: success == 1, errorJSON: errorJSON.map { String(cString: $0) })
 }
 
 /// Builds the JSON `anyform_convert_start` reads its render options from —

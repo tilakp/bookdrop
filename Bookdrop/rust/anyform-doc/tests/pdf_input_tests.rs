@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use anyform_core::{InputPlugin, Options, StdLog};
+use anyform_core::{ConvError, InputPlugin, Options, StdLog};
 use anyform_doc::PdfInput;
 
 /// `PdfInput` needs `rust/scripts/fetch-pdfium.sh` to have run once (same
@@ -97,8 +97,8 @@ fn two_column_pdf_is_rejected_with_a_specific_message() {
     let result = registry.convert(&fixture("two-column.pdf"), &output, &Options::new(), &StdLog);
     let _ = std::fs::remove_file(&output);
 
-    let err = result.expect_err("a two-column PDF must be rejected, not silently scrambled").to_string();
-    assert!(err.contains("multi-column layout"), "got: {err}");
+    let err = result.expect_err("a two-column PDF must be rejected, not silently scrambled");
+    assert!(matches!(err, ConvError::MultiColumnPdf), "got: {err:?}");
 }
 
 #[test]
@@ -108,8 +108,8 @@ fn scanned_pdf_is_rejected_with_a_specific_message() {
     let result = registry.convert(&fixture("no-text-layer.pdf"), &output, &Options::new(), &StdLog);
     let _ = std::fs::remove_file(&output);
 
-    let err = result.expect_err("an image-only PDF must be rejected, not emitted as an empty book").to_string();
-    assert!(err.contains("no selectable text"), "got: {err}");
+    let err = result.expect_err("an image-only PDF must be rejected, not emitted as an empty book");
+    assert!(matches!(err, ConvError::ScannedPdf), "got: {err:?}");
 }
 
 #[test]
@@ -119,8 +119,8 @@ fn encrypted_pdf_is_rejected_with_a_specific_message() {
     let result = registry.convert(&fixture("encrypted.pdf"), &output, &Options::new(), &StdLog);
     let _ = std::fs::remove_file(&output);
 
-    let err = result.expect_err("a password-protected PDF must be rejected cleanly").to_string();
-    assert!(err.contains("password-protected"), "got: {err}");
+    let err = result.expect_err("a password-protected PDF must be rejected cleanly");
+    assert!(matches!(err, ConvError::PasswordProtected), "got: {err:?}");
 }
 
 #[test]

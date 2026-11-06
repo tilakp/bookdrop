@@ -44,20 +44,21 @@ final class BookLoaderTests: XCTestCase {
             _ = try await BookLoader.load(URL(fileURLWithPath: "/tmp/notes.rtf"))
             XCTFail("expected an error")
         } catch {
-            XCTAssertEqual(error as? BookLoadError, .unsupportedFormat("rtf"))
+            XCTAssertEqual(error as? UnsupportedFormatError, UnsupportedFormatError(fileExtension: "rtf"))
             XCTAssertEqual(error.localizedDescription, "Bookdrop can't open .rtf files.")
         }
     }
 
     func testBrokenFilesReportTheEngineMessage() async throws {
-        let cases = [("not-a-book.epub", "isn't a valid archive"), ("not-a-book.pdf", "PDF")]
-        for (name, expected) in cases {
+        let cases = [("not-a-book.epub", "isn't a valid archive", "invalid_archive"), ("not-a-book.pdf", "PDF", "malformed")]
+        for (name, expected, code) in cases {
             let url = try scratchFile(name, contents: "not a real book")
             do {
                 _ = try await BookLoader.load(url)
                 XCTFail("\(name): expected an error")
             } catch {
                 let message = error.localizedDescription
+                XCTAssertEqual((error as? EngineError)?.code, code, "\(name)")
                 XCTAssertTrue(message.contains(expected), "\(name): got \(message)")
                 XCTAssertFalse(message.contains("Kindle"), "a non-Kindle file must not be called a Kindle file")
             }
@@ -72,5 +73,24 @@ final class BookLoaderTests: XCTestCase {
         let book = try await BookLoader.load(fixture("zip-slip", "epub"))
         XCTAssertEqual(book.title, "Zip Slip")
         XCTAssertFalse(FileManager.default.fileExists(atPath: probe.path), "an archive entry escaped to \(probe.path)")
+    }
+
+    func testEngineErrorsCarryAdviceForKnownCodes() async throws {
+        let encrypted = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("rust/anyform-doc/tests/fixtures/encrypted.pdf")
+        do {
+            _ = try await BookLoader.load(encrypted)
+            XCTFail("expected an error")
+        } catch let error as EngineError {
+            XCTAssertEqual(error.code, "password_protected")
+            XCTAssertEqual(error.message, "This PDF is password-protected, so it can't be converted.")
+            XCTAssertNotNil(error.recoverySuggestion)
+        }
+    }
+
+    func testUndecodableEngineOutputStillReachesTheUser() {
+        XCTAssertEqual(EngineError.decode("not json").message, "not json")
+        XCTAssertEqual(EngineError.decode(nil).code, "internal")
     }
 }

@@ -57,11 +57,8 @@ final class AppCoordinator: ObservableObject {
         let supported = urls.filter(BookLoader.isSupported)
         guard !supported.isEmpty else {
             if let first = urls.first {
-                let error = BookLoadError.unsupportedFormat(first.pathExtension.lowercased())
-                screen = .error(
-                    message: error.errorDescription ?? "Bookdrop can't open this file.",
-                    hint: "Bookdrop opens EPUB, Kindle (AZW3, AZW, KFX, MOBI) and PDF files.",
-                    technicalDetails: nil)
+                let error = UnsupportedFormatError(fileExtension: first.pathExtension.lowercased())
+                screen = .error(message: error.localizedDescription, hint: error.recoverySuggestion, technicalDetails: nil)
             }
             return nil
         }
@@ -83,7 +80,7 @@ final class AppCoordinator: ObservableObject {
             } catch {
                 screen = .error(
                     message: error.localizedDescription,
-                    hint: "Try another file.",
+                    hint: (error as? LocalizedError)?.recoverySuggestion ?? "Try another file.",
                     technicalDetails: String(describing: error))
             }
         }
@@ -183,20 +180,19 @@ final class AppCoordinator: ObservableObject {
             screen = .complete(info)
         } catch is CancellationError {
             screen = .loaded(book)
-        } catch RustConversionEngineError.cancelled {
+        } catch let error as EngineError where error.isCancellation {
             screen = .loaded(book)
         } catch let error as LocalizedError {
-            // "Preserve EPUB Styling" is only sensible advice when the
-            // *source* actually has EPUB styling to preserve — a PDF
-            // source failing to convert to PDF (a real, if rare,
-            // possibility now that PdfInput exists) would get nonsensical
-            // advice otherwise.
+            // "Preserve EPUB Styling" only helps a source that has EPUB
+            // styling, so a PDF source gets the general hint.
             let sourceIsStyledEpubLike = book.sourceURL.pathExtension.lowercased() != "pdf"
+            let generalHint =
+                outputFormat == .pdf && sourceIsStyledEpubLike
+                ? "Try enabling \u{201C}Preserve EPUB Styling\u{201D} or choose another output format."
+                : "Try another output format."
             screen = .error(
                 message: error.errorDescription ?? "Couldn't convert this book.",
-                hint: outputFormat == .pdf && sourceIsStyledEpubLike
-                    ? "Try enabling \u{201C}Preserve EPUB Styling\u{201D} or choose another output format."
-                    : "Try another output format.",
+                hint: error.recoverySuggestion ?? generalHint,
                 technicalDetails: String(describing: error))
         } catch {
             screen = .error(

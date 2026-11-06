@@ -56,7 +56,7 @@ impl InputPlugin<DocumentIR> for KindleInput {
 
         if !output.status.success() || !staged_epub.exists() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(ConvError::Other(describe_boko_failure(&stderr)));
+            return Err(describe_boko_failure(&stderr));
         }
 
         // The staged EPUB is a normal EPUB in every respect, so the whole
@@ -76,19 +76,17 @@ impl InputPlugin<DocumentIR> for KindleInput {
 /// Turns boko's stderr into something worth showing a user. DRM is the one
 /// failure that is both common and genuinely unfixable, so it gets its own
 /// message instead of being lumped in with malformed-file errors.
-fn describe_boko_failure(stderr: &str) -> String {
+fn describe_boko_failure(stderr: &str) -> ConvError {
     let lower = stderr.to_lowercase();
     if lower.contains("drm") || lower.contains("encrypted") || lower.contains("decrypt") {
-        return "This book is DRM-protected, so it can't be converted. \
-                Kindle books bought from Amazon are encrypted."
-            .into();
+        return ConvError::DrmProtected;
     }
     let detail = stderr.lines().rfind(|l| !l.trim().is_empty()).unwrap_or("").trim();
-    if detail.is_empty() {
+    ConvError::Malformed(if detail.is_empty() {
         "This Kindle file couldn't be read.".into()
     } else {
         format!("This Kindle file couldn't be read: {detail}")
-    }
+    })
 }
 
 /// Mirrors `resolve_chromium_path` in `pdf.rs`: an explicit option wins, then
@@ -117,7 +115,7 @@ fn resolve_boko_path(opts: &Options) -> Result<PathBuf, ConvError> {
         return Ok(dev_path);
     }
 
-    Err(ConvError::Other(
+    Err(ConvError::ToolMissing(
         "no bundled ebook converter found — set the \"boko_path\" option, \
          ANYFORM_BOKO_PATH, or run scripts/fetch-boko.sh"
             .into(),

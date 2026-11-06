@@ -38,7 +38,7 @@ impl OutputPlugin<DocumentIR> for HtmlOutput {
 
     fn convert(&self, ir: &DocumentIR, output: &Path, opts: &Options, log: &dyn Log) -> Result<(), ConvError> {
         if ir.spine.is_empty() {
-            return Err(ConvError::Other("This book has no readable chapters.".into()));
+            return Err(ConvError::NoChapters);
         }
         let include_cover = opts.get_bool("include_cover", true);
         let generate_toc = opts.get_bool("generate_table_of_contents", true);
