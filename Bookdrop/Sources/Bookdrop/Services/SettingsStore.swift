@@ -66,11 +66,6 @@ final class SettingsStore: ObservableObject {
         }
     }
 
-    func clearTemporaryFiles() {
-        let tempDir = FileManager.default.temporaryDirectory.appendingPathComponent("Bookdrop", isDirectory: true)
-        try? FileManager.default.removeItem(at: tempDir)
-    }
-
     private func save() {
         let stored = StoredSettings(
             defaultOutputLocation: defaultOutputLocation, openConvertedFile: openConvertedFile,

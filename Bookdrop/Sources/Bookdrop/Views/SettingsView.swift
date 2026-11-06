@@ -94,7 +94,8 @@ struct SettingsView: View {
 
             VStack(alignment: .leading, spacing: 8) {
                 Text("Temporary files").font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
-                Button("Clear Temporary Files") { settings.clearTemporaryFiles() }
+                // Keeps the files of the book that is open now.
+                Button("Clear Temporary Files") { TemporaryFiles.clearLeftovers() }
             }
         }
     }
