@@ -78,7 +78,7 @@ impl InputPlugin<DocumentIR> for PdfInput {
         }
 
         log.progress(0.28, "Building chapters");
-        let work_dir = anyform_core::fresh_work_dir("Bookdrop-pdf")?;
+        let work_dir = anyform_core::fresh_work_dir("pdf-")?;
 
         let mut manifest = HashMap::new();
         let mut spine = Vec::with_capacity(chapters.len());
@@ -91,7 +91,7 @@ impl InputPlugin<DocumentIR> for PdfInput {
             let id = format!("ch{:03}", i + 1);
             let href = format!("chapter-{:03}.xhtml", i + 1);
             let xhtml = pdf_layout::render_chapter_xhtml(chapter);
-            std::fs::write(work_dir.join(&href), xhtml)?;
+            std::fs::write(work_dir.path().join(&href), xhtml)?;
 
             manifest.insert(
                 id.clone(),
@@ -111,7 +111,8 @@ impl InputPlugin<DocumentIR> for PdfInput {
             spine,
             toc,
             file_size_bytes,
-            content_dir: work_dir,
+            content_dir: work_dir.path().to_path_buf(),
+            work_dir: Some(work_dir),
         })
     }
 }

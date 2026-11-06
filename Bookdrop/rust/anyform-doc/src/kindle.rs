@@ -38,8 +38,10 @@ impl InputPlugin<DocumentIR> for KindleInput {
 
     fn convert(&self, input: &Path, opts: &Options, log: &dyn Log) -> Result<DocumentIR, ConvError> {
         let boko = resolve_boko_path(opts)?;
-        let work_dir = anyform_core::fresh_work_dir("Bookdrop-kindle")?;
-        let staged_epub = work_dir.join("normalized.epub");
+        // Dropped (and deleted) at the end of this call: `EpubInput` extracts
+        // the staged EPUB into its own work dir, which the IR then owns.
+        let staging = anyform_core::fresh_work_dir("kindle-")?;
+        let staged_epub = staging.path().join("normalized.epub");
 
         let label = input.file_name().and_then(|n| n.to_str()).unwrap_or("book");
         log.info(&format!("converting {label} to EPUB via bundled boko"));

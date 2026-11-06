@@ -45,9 +45,8 @@ impl Log for FfiLog {
 
     fn progress(&self, fraction: f64, stage: &str) {
         if let Some(cb) = self.on_progress {
-            if let Ok(c_stage) = CString::new(stage) {
-                cb(fraction, c_stage.as_ptr(), self.progress_ctx as *mut c_void);
-            }
+            let c_stage = c_string_lossy(stage.to_string());
+            cb(fraction, c_stage.as_ptr(), self.progress_ctx as *mut c_void);
         }
     }
 
@@ -136,14 +135,12 @@ enum ErrorResult {
 /// `path` must be a valid, NUL-terminated UTF-8 C string.
 #[no_mangle]
 pub unsafe extern "C" fn anyform_parse_book(path: *const c_char) -> *mut c_char {
-    let result: Result<BookInfo, String> = (|| {
+    let result: Result<BookInfo, String> = catch_panic(|| {
         let path = c_str_to_pathbuf(path)?;
         let registry = anyform_doc::document_registry();
-        let ir = registry
-            .parse(&path, &Options::new(), &anyform_core::StdLog)
-            .map_err(|e| e.to_string())?;
+        let ir = registry.parse(&path, &Options::new(), &anyform_core::StdLog).map_err(|e| e.to_string())?;
         Ok(BookInfo::from(&ir))
-    })();
+    });
 
     let payload = match result {
         Ok(book) => serde_json::to_string(&ParseResult::Ok { book }),
@@ -205,29 +202,17 @@ pub unsafe extern "C" fn anyform_convert_start(
             on_progress,
             progress_ctx: progress_ctx_addr,
         };
-        let registry = anyform_doc::document_registry();
-        let result = registry.convert(&input, &output, &opts, &log);
+        let result = catch_panic(|| {
+            let registry = anyform_doc::document_registry();
+            registry.convert(&input, &output, &opts, &log).map_err(|e| e.to_string())
+        });
 
-        let (success, error_json) = match result {
-            Ok(()) => (1, None),
-            Err(e) => (
-                0,
-                Some(
-                    serde_json::to_string(&ErrorResult::Error { message: e.to_string() })
-                        .unwrap_or_else(|_| "{\"status\":\"error\",\"message\":\"unknown error\"}".into()),
-                ),
-            ),
-        };
-
-        if let Some(cb) = on_complete {
-            match &error_json {
-                Some(json) => {
-                    if let Ok(c_json) = CString::new(json.as_str()) {
-                        cb(success, c_json.as_ptr(), complete_ctx_addr as *mut c_void);
-                    }
-                }
-                None => cb(success, std::ptr::null(), complete_ctx_addr as *mut c_void),
-            }
+        // `on_complete` must fire exactly once whatever happened above: the
+        // Swift side waits on it, and a missed call would hang the UI.
+        match (on_complete, result) {
+            (Some(cb), Ok(())) => cb(1, std::ptr::null(), complete_ctx_addr as *mut c_void),
+            (Some(_), Err(message)) => complete_with_error(on_complete, complete_ctx_addr as *mut c_void, message),
+            (None, _) => {}
         }
     });
 
@@ -236,11 +221,25 @@ pub unsafe extern "C" fn anyform_convert_start(
 
 fn complete_with_error(on_complete: Option<CompleteCallback>, ctx: *mut c_void, message: String) {
     if let Some(cb) = on_complete {
-        let json = serde_json::to_string(&ErrorResult::Error { message }).unwrap_or_default();
-        if let Ok(c_json) = CString::new(json) {
-            cb(0, c_json.as_ptr(), ctx);
-        }
+        let json = serde_json::to_string(&ErrorResult::Error { message })
+            .unwrap_or_else(|_| "{\"status\":\"error\",\"message\":\"unknown error\"}".into());
+        let c_json = c_string_lossy(json);
+        cb(0, c_json.as_ptr(), ctx);
     }
+}
+
+/// Runs `f`, turning a panic into an error. A panic must never unwind out
+/// of an `extern "C"` function (that aborts the whole app), and must never
+/// skip the completion callback (that hangs it).
+fn catch_panic<T>(f: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(f))
+        .unwrap_or_else(|_| Err("Bookdrop hit an internal error while reading this book.".to_string()))
+}
+
+/// `CString::new` fails on an interior NUL (possible in text from a
+/// subprocess's stderr). Drop NULs instead of losing the whole message.
+fn c_string_lossy(s: String) -> CString {
+    CString::new(s.replace('\0', "")).expect("NULs were removed")
 }
 
 /// # Safety
@@ -314,9 +313,7 @@ unsafe fn options_from_json(s: *const c_char) -> Result<Options, String> {
 }
 
 fn string_to_c(s: String) -> *mut c_char {
-    CString::new(s)
-        .unwrap_or_else(|_| CString::new("{\"status\":\"error\",\"message\":\"internal: NUL in output\"}").unwrap())
-        .into_raw()
+    c_string_lossy(s).into_raw()
 }
 
 fn base64_encode(bytes: &[u8]) -> String {

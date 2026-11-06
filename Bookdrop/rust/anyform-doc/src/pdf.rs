@@ -192,7 +192,10 @@ fn render_chapters_parallel(
                 })
             })
             .collect();
-        handles.into_iter().map(|h| h.join().expect("chapter render worker thread panicked")).collect()
+        handles
+            .into_iter()
+            .map(|h| h.join().unwrap_or_else(|_| Err(ConvError::Other("a chapter failed to render (internal error)".into()))))
+            .collect()
     });
 
     let mut ordered: BTreeMap<usize, (String, lopdf::Document)> = BTreeMap::new();

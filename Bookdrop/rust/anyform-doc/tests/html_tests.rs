@@ -67,6 +67,7 @@ fn empty_spine_is_rejected() {
         toc: Vec::new(),
         file_size_bytes: 0,
         content_dir: std::env::temp_dir(),
+        work_dir: None,
     };
     let output = std::env::temp_dir().join(format!("anyform-html-test-empty-{}.html", std::process::id()));
     use anyform_core::OutputPlugin;

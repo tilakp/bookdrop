@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 
 /// Errors surfaced anywhere in an input/output/transform pipeline.
@@ -198,7 +198,21 @@ impl<IR> Registry<IR> {
         for t in &self.transforms {
             t.apply(&mut ir, opts)?;
         }
-        out_plugin.convert(&ir, output, opts, log)
+
+        // Plugins write to a temp file next to `output`, which is renamed
+        // into place only on success. A failed or cancelled conversion then
+        // never leaves a broken file, and never destroys a file it replaces.
+        let parent = output.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new("."));
+        std::fs::create_dir_all(parent)?;
+        let staging = tempfile::Builder::new()
+            .prefix(".bookdrop-")
+            .suffix(&format!(".{out_ext}"))
+            .tempfile_in(parent)?
+            .into_temp_path();
+        out_plugin.convert(&ir, &staging, opts, log)?;
+        set_default_file_mode(&staging)?;
+        staging.persist(output).map_err(|e| ConvError::Io(e.error))?;
+        Ok(())
     }
 }
 
@@ -215,25 +229,25 @@ pub fn ext_of(path: &Path) -> Result<String, ConvError> {
         .ok_or_else(|| ConvError::Other(format!("no file extension on {}", path.display())))
 }
 
-/// Extracts a fresh unique working directory under the system temp dir,
-/// mirroring Bookdrop's Swift `EpubParser` behavior of extracting each
-/// EPUB into `NSTemporaryDirectory()/Bookdrop/<uuid>/`.
-pub fn fresh_work_dir(namespace: &str) -> std::io::Result<PathBuf> {
-    let dir = std::env::temp_dir()
-        .join(namespace)
-        .join(format!("{:x}", fastrand_u128()));
-    std::fs::create_dir_all(&dir)?;
-    Ok(dir)
+/// A fresh, uniquely named working directory under
+/// `$TMPDIR/Bookdrop/`. It is deleted when the returned value is dropped.
+/// The shared parent folder lets the app's "Clear Temporary Files" remove
+/// whatever a crash left behind.
+pub fn fresh_work_dir(prefix: &str) -> std::io::Result<tempfile::TempDir> {
+    let root = std::env::temp_dir().join("Bookdrop");
+    std::fs::create_dir_all(&root)?;
+    tempfile::Builder::new().prefix(prefix).tempdir_in(root)
 }
 
-/// Tiny dependency-free random u128 for work-dir naming — not
-/// cryptographic, just needs to not collide across concurrent conversions.
-fn fastrand_u128() -> u128 {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_nanos();
-    let pid = std::process::id() as u128;
-    nanos ^ (pid << 64)
+/// `tempfile` creates files readable only by their owner (0600). A converted
+/// book is a normal document, so give it the usual 0644.
+fn set_default_file_mode(path: &Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o644))?;
+    }
+    Ok(())
 }
+
+pub use tempfile::TempDir;

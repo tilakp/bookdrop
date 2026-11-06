@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
-use anyform_core::{ConvError, InputPlugin, Log, Options};
+use anyform_core::{ConvError, InputPlugin, Log, Options, TempDir};
 
 use crate::ir::{DocumentIR, Metadata, Resource, SpineItem, TocNode};
 
@@ -62,23 +62,24 @@ impl InputPlugin<DocumentIR> for EpubInput {
         let file_size_bytes = std::fs::metadata(input).map(|m| m.len()).unwrap_or(0);
 
         let work_dir = extract_epub(input)?;
+        let work_path = work_dir.path().to_path_buf();
 
-        let container_path = work_dir.join("META-INF/container.xml");
+        let container_path = work_path.join("META-INF/container.xml");
         if !container_path.exists() {
             return Err(ConvError::MissingFile("META-INF/container.xml".into()));
         }
         let opf_relative = parse_container(&container_path)?;
-        let opf_path = work_dir.join(&opf_relative);
+        let opf_path = work_path.join(&opf_relative);
         if !opf_path.exists() {
             return Err(ConvError::MissingFile(opf_relative));
         }
         let content_dir = opf_path
             .parent()
             .map(Path::to_path_buf)
-            .unwrap_or_else(|| work_dir.clone());
+            .unwrap_or_else(|| work_path.clone());
 
         let opf = parse_opf(&opf_path)?;
-        deobfuscate_fonts(&work_dir, &opf);
+        deobfuscate_fonts(&work_path, &opf);
         let toc = parse_toc(&opf, &content_dir);
         let cover_href = opf.cover_href();
         let cover = cover_href
@@ -117,25 +118,25 @@ impl InputPlugin<DocumentIR> for EpubInput {
             toc,
             file_size_bytes,
             content_dir,
+            work_dir: Some(work_dir),
         })
     }
 }
 
-/// Extracts the EPUB into a fresh temp directory, mirroring Bookdrop's
-/// Swift `EpubParser.parse` — the returned directory stays on disk; callers
-/// own cleanup for as long as they need spine/manifest files.
-fn extract_epub(input: &Path) -> Result<PathBuf, ConvError> {
+/// Extracts the EPUB into a fresh temp directory, deleted when the returned
+/// `TempDir` drops. `enclosed_name` drops entries that would escape it.
+fn extract_epub(input: &Path) -> Result<TempDir, ConvError> {
     let file = std::fs::File::open(input)?;
     let mut archive = zip::ZipArchive::new(file).map_err(|_| ConvError::InvalidArchive)?;
 
-    let work_dir = anyform_core::fresh_work_dir("Bookdrop")?;
+    let work_dir = anyform_core::fresh_work_dir("epub-")?;
 
     for i in 0..archive.len() {
         let mut entry = archive.by_index(i).map_err(|_| ConvError::InvalidArchive)?;
         let Some(relative) = entry.enclosed_name().map(Path::to_path_buf) else {
             continue;
         };
-        let dest = work_dir.join(relative);
+        let dest = work_dir.path().join(relative);
         if entry.is_dir() {
             std::fs::create_dir_all(&dest)?;
             continue;

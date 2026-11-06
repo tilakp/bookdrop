@@ -21,6 +21,10 @@ pub struct DocumentIR {
     /// it's a local filesystem path meaningful only within this process.
     #[serde(skip)]
     pub content_dir: PathBuf,
+    /// Owns the temp directory that holds `content_dir`, if the input
+    /// plugin made one. Dropping the IR deletes it.
+    #[serde(skip)]
+    pub work_dir: Option<anyform_core::TempDir>,
 }
 
 #[derive(Debug, Serialize)]
