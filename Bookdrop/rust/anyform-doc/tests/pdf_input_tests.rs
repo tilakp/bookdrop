@@ -148,7 +148,7 @@ fn real_third_party_government_pdf_converts_with_readable_text() {
     // disclosed limitation - not asserted against here - but the bulk of
     // the document must still be legible prose, not a single unbroken blob
     // or scrambled reading order.
-    assert!(ir.spine.len() >= 1);
+    assert!(!ir.spine.is_empty());
 }
 
 #[test]

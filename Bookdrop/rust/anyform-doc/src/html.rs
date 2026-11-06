@@ -162,44 +162,6 @@ fn rewrite_references(text: &str, data_uris: &HashMap<String, String>) -> String
     result
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn exact_short_href_is_not_shadowed_by_a_longer_hrefs_bare_filename_fallback() {
-        // "logo.png" (root) and "images/logo.png" share the bare filename
-        // "logo.png". A chapter correctly referencing its own root-level
-        // "logo.png" by its exact href must get *its own* image, not the
-        // nested one's, regardless of which order the two candidates are
-        // considered in.
-        let mut data_uris = HashMap::new();
-        data_uris.insert("logo.png".to_string(), "data:image/png;base64,ROOT".to_string());
-        data_uris.insert("images/logo.png".to_string(), "data:image/png;base64,NESTED".to_string());
-
-        let result = rewrite_references(r#"<img src="logo.png"/>"#, &data_uris);
-        assert_eq!(result, r#"<img src="data:image/png;base64,ROOT"/>"#);
-    }
-
-    #[test]
-    fn bare_filename_collision_between_two_different_images_is_deterministic() {
-        // Two different images, both named "logo.png" in different
-        // directories, both referenced only by bare filename - genuinely
-        // ambiguous from string content alone (see this function's doc
-        // comment), so this only asserts the resolution is *stable*
-        // across repeated calls with the same input, not "correct" for
-        // both chapters simultaneously.
-        let mut data_uris = HashMap::new();
-        data_uris.insert("a/logo.png".to_string(), "data:image/png;base64,AAAA".to_string());
-        data_uris.insert("b/logo.png".to_string(), "data:image/png;base64,BBBB".to_string());
-
-        let first = rewrite_references(r#"<img src="logo.png"/>"#, &data_uris);
-        for _ in 0..10 {
-            assert_eq!(rewrite_references(r#"<img src="logo.png"/>"#, &data_uris), first);
-        }
-    }
-}
-
 fn extract_body(html: &str) -> &str {
     let bytes = html.as_bytes();
     let Some(body_start) = find_ascii_ci(bytes, b"<body") else { return html };
@@ -240,4 +202,42 @@ fn toc_title<'a>(href: &str, nodes: &'a [TocNode]) -> Option<&'a str> {
 
 fn xml_escape(s: &str) -> String {
     s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn exact_short_href_is_not_shadowed_by_a_longer_hrefs_bare_filename_fallback() {
+        // "logo.png" (root) and "images/logo.png" share the bare filename
+        // "logo.png". A chapter correctly referencing its own root-level
+        // "logo.png" by its exact href must get *its own* image, not the
+        // nested one's, regardless of which order the two candidates are
+        // considered in.
+        let mut data_uris = HashMap::new();
+        data_uris.insert("logo.png".to_string(), "data:image/png;base64,ROOT".to_string());
+        data_uris.insert("images/logo.png".to_string(), "data:image/png;base64,NESTED".to_string());
+
+        let result = rewrite_references(r#"<img src="logo.png"/>"#, &data_uris);
+        assert_eq!(result, r#"<img src="data:image/png;base64,ROOT"/>"#);
+    }
+
+    #[test]
+    fn bare_filename_collision_between_two_different_images_is_deterministic() {
+        // Two different images, both named "logo.png" in different
+        // directories, both referenced only by bare filename - genuinely
+        // ambiguous from string content alone (see this function's doc
+        // comment), so this only asserts the resolution is *stable*
+        // across repeated calls with the same input, not "correct" for
+        // both chapters simultaneously.
+        let mut data_uris = HashMap::new();
+        data_uris.insert("a/logo.png".to_string(), "data:image/png;base64,AAAA".to_string());
+        data_uris.insert("b/logo.png".to_string(), "data:image/png;base64,BBBB".to_string());
+
+        let first = rewrite_references(r#"<img src="logo.png"/>"#, &data_uris);
+        for _ in 0..10 {
+            assert_eq!(rewrite_references(r#"<img src="logo.png"/>"#, &data_uris), first);
+        }
+    }
 }
