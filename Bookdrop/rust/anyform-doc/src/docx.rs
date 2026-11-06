@@ -71,7 +71,8 @@ impl OutputPlugin<DocumentIR> for DocxOutput {
             if let Some(cover) = &ir.metadata.cover {
                 match image_dimensions(cover) {
                     Some((w, h)) => {
-                        let pic = Pic::new_with_dimensions(cover.clone(), w, h);
+                        let (w_emu, h_emu) = fit_to_text_area(w, h);
+                        let pic = Pic::new_with_dimensions(cover.clone(), w, h).size(w_emu, h_emu);
                         docx = docx.add_paragraph(Paragraph::new().add_run(Run::new().add_image(pic)));
                         docx = docx.add_paragraph(Paragraph::new());
                     }
@@ -104,6 +105,18 @@ impl OutputPlugin<DocumentIR> for DocxOutput {
         log.progress(1.0, "Done");
         Ok(())
     }
+}
+
+/// docx-rs sizes a picture at 1 px = 1/96 in, so a typical 1600x2400 px
+/// cover came out 16x25 in, far larger than the page. Scales the image,
+/// keeping its aspect ratio, to fit the default text area of a Letter page
+/// (6.5 x 9 in). Never enlarges a small image.
+fn fit_to_text_area(width_px: u32, height_px: u32) -> (u32, u32) {
+    const EMU_PER_INCH: f64 = 914_400.0;
+    const EMU_PER_PX: f64 = 9_525.0;
+    let (w, h) = (width_px.max(1) as f64 * EMU_PER_PX, height_px.max(1) as f64 * EMU_PER_PX);
+    let scale = (6.5 * EMU_PER_INCH / w).min(9.0 * EMU_PER_INCH / h).min(1.0);
+    ((w * scale) as u32, (h * scale) as u32)
 }
 
 fn heading_half_points(level: u8) -> usize {
@@ -231,6 +244,14 @@ mod tests {
             0x00, 0x00, 0x01, 0x08, 0x02, 0x00, 0x00, 0x00,
         ];
         assert_eq!(image_dimensions(bytes), Some((1, 1)));
+    }
+
+    #[test]
+    fn large_cover_is_scaled_to_fit_the_page() {
+        let (w, h) = fit_to_text_area(1600, 2400);
+        assert_eq!(h, 9 * 914_400, "a tall cover is limited by the 9in text height");
+        assert!(w <= (6.5 * 914_400.0) as u32);
+        assert_eq!(fit_to_text_area(96, 96), (914_400, 914_400), "a small image keeps its own size");
     }
 
     #[test]

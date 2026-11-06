@@ -259,3 +259,78 @@ fn typography_options_are_applied() {
     assert!(all_text.contains("Chapter One"));
     assert!(all_text.contains("Chapter Two"));
 }
+
+/// Page number (1-based) of every outline entry, in outline order. `None`
+/// for an entry whose target is not a page of `doc`.
+fn outline_target_pages(doc: &lopdf::Document) -> Vec<Option<u32>> {
+    let page_numbers: std::collections::HashMap<lopdf::ObjectId, u32> =
+        doc.get_pages().into_iter().map(|(number, id)| (id, number)).collect();
+    let mut out = Vec::new();
+    fn walk(doc: &lopdf::Document, first: Option<lopdf::ObjectId>, pages: &std::collections::HashMap<lopdf::ObjectId, u32>, out: &mut Vec<Option<u32>>) {
+        let mut next = first;
+        while let Some(id) = next {
+            let item = doc.get_object(id).unwrap().as_dict().unwrap();
+            let action = item.get(b"A").and_then(|a| doc.dereference(a)).map(|(_, a)| a.clone());
+            let target = action
+                .ok()
+                .and_then(|a| a.as_dict().ok()?.get(b"D").ok()?.as_array().ok()?.first()?.as_reference().ok())
+                .and_then(|page| pages.get(&page).copied());
+            out.push(target);
+            walk(doc, item.get(b"First").and_then(|o| o.as_reference()).ok(), pages, out);
+            next = item.get(b"Next").and_then(|o| o.as_reference()).ok();
+        }
+    }
+    let outlines_id = doc.catalog().unwrap().get(b"Outlines").and_then(|o| o.as_reference()).unwrap();
+    let first = doc.get_object(outlines_id).unwrap().as_dict().unwrap().get(b"First").and_then(|o| o.as_reference()).ok();
+    walk(doc, first, &page_numbers, &mut out);
+    out
+}
+
+fn convert_named_fixture(name: &str, test_name: &str) -> lopdf::Document {
+    let input = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures").join(name);
+    let output = std::env::temp_dir().join(format!("anyform-pdf-test-{test_name}-{}.pdf", std::process::id()));
+    anyform_doc::document_registry().convert(&input, &output, &Options::new(), &StdLog).unwrap();
+    let doc = lopdf::Document::load(&output).unwrap();
+    let _ = std::fs::remove_file(&output);
+    doc
+}
+
+#[test]
+fn toc_fragments_get_their_own_bookmark_pages() {
+    // Several chapters share one XHTML file in this Gutenberg book, so its
+    // TOC links are "file.html#chapter-n". Bookmarks used to ignore the
+    // fragment: 63 entries opened only 15 distinct pages.
+    let doc = convert_named_fixture("pride-and-prejudice.epub", "fragments");
+    let targets = outline_target_pages(&doc);
+    assert!(targets.iter().all(Option::is_some), "every bookmark must open a real page");
+    let distinct: std::collections::HashSet<_> = targets.iter().collect();
+    assert!(distinct.len() > 50, "expected ~one page per chapter, got {} distinct of {}", distinct.len(), targets.len());
+    assert!(targets.windows(2).all(|w| w[0] <= w[1]), "bookmarks must follow reading order");
+}
+
+#[test]
+fn bookmarks_work_when_the_nav_is_in_a_subfolder() {
+    // nested-nav.epub's TOC hrefs are relative to OEBPS/text/, not to the
+    // OPF. Bookmarks used to point at object "0 0 R" (no page at all).
+    let doc = convert_named_fixture("nested-nav.epub", "nested-nav");
+    let targets = outline_target_pages(&doc);
+    assert_eq!(targets.len(), 2);
+    assert!(targets.iter().all(Option::is_some), "bookmarks must open real pages: {targets:?}");
+    assert_ne!(targets[0], targets[1]);
+}
+
+#[test]
+fn non_ascii_metadata_is_utf16() {
+    use anyform_core::{InputPlugin, OutputPlugin};
+    let mut ir = anyform_doc::EpubInput.convert(&fixture_path(), &Options::new(), &StdLog).unwrap();
+    ir.metadata.title = "Les Misérables – 東京".into();
+    let output = std::env::temp_dir().join(format!("anyform-pdf-test-utf16-{}.pdf", std::process::id()));
+    anyform_doc::PdfOutput.convert(&ir, &output, &Options::new(), &StdLog).unwrap();
+    let doc = lopdf::Document::load(&output).unwrap();
+    let _ = std::fs::remove_file(&output);
+    let info_id = doc.trailer.get(b"Info").and_then(|o| o.as_reference()).unwrap();
+    let title = doc.get_object(info_id).unwrap().as_dict().unwrap().get(b"Title").unwrap().as_str().unwrap().to_vec();
+    assert_eq!(&title[..2], &[0xFE, 0xFF], "non-ASCII text strings need a UTF-16BE byte order mark");
+    let units: Vec<u16> = title[2..].chunks(2).map(|c| u16::from_be_bytes([c[0], c[1]])).collect();
+    assert_eq!(String::from_utf16(&units).unwrap(), "Les Misérables – 東京");
+}

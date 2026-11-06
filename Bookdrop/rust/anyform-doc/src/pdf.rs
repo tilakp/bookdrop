@@ -88,6 +88,7 @@ impl OutputPlugin<DocumentIR> for PdfOutput {
 
         let render_indices: Vec<usize> =
             (0..ir.spine.len()).filter(|i| skip_spine_index != Some(*i)).collect();
+        let toc_fragments = toc_fragments_by_chapter(&ir.toc);
         if !render_indices.is_empty() {
             let done_count = AtomicUsize::new(if include_synthetic_cover { 1 } else { 0 });
             let rendered = render_chapters_parallel(
@@ -96,6 +97,7 @@ impl OutputPlugin<DocumentIR> for PdfOutput {
                 &ir.spine,
                 &render_indices,
                 &render_opts,
+                &toc_fragments,
                 log,
                 &done_count,
                 total_steps,
@@ -145,6 +147,7 @@ fn render_chapters_parallel(
     spine: &[SpineItem],
     indices: &[usize],
     render_opts: &RenderOptions,
+    toc_fragments: &HashMap<String, Vec<String>>,
     log: &dyn Log,
     done_count: &AtomicUsize,
     total_steps: usize,
@@ -176,7 +179,8 @@ fn render_chapters_parallel(
                         }
                         let item = &spine[i];
                         let original_path = content_dir.join(&item.href);
-                        let original_bytes = prepare_chapter_html(&original_path, render_opts)?;
+                        let fragments = toc_fragments.get(&item.href).map(Vec::as_slice).unwrap_or_default();
+                        let original_bytes = prepare_chapter_html(&original_path, render_opts, fragments)?;
                         let doc = render_one_chapter(&tab, &original_path, &item.href, render_opts);
                         let _ = std::fs::write(&original_path, &original_bytes);
                         let mut doc = doc?;
@@ -415,7 +419,7 @@ fn style_strip_regexes() -> &'static StyleStripRegexes {
 /// every internal link, including same-chapter ones, into a dead `file://`
 /// URI post-merge. See `namespace_chapter_dests`/`fix_cross_chapter_links`
 /// for how the resulting links are carried through the merge.
-fn prepare_chapter_html(original: &Path, opts: &RenderOptions) -> Result<Vec<u8>, ConvError> {
+fn prepare_chapter_html(original: &Path, opts: &RenderOptions, toc_fragments: &[String]) -> Result<Vec<u8>, ConvError> {
     let original_bytes = std::fs::read(original)
         .map_err(|e| ConvError::Other(format!("failed to read {}: {e}", original.display())))?;
     let needs_strip = !opts.preserve_epub_styling || opts.remove_publisher_styling;
@@ -431,6 +435,7 @@ fn prepare_chapter_html(original: &Path, opts: &RenderOptions) -> Result<Vec<u8>
 
     let css = typography_css(opts);
     html = inject_style(&html, &css);
+    html = inject_anchor_links(&html, toc_fragments);
 
     std::fs::write(original, html)?;
     Ok(original_bytes)
@@ -486,6 +491,45 @@ fn inject_style(html: &str, css: &str) -> String {
     } else {
         format!("<head>{style_block}</head>{html}")
     }
+}
+
+/// Canonical chapter path -> the fragments TOC entries point at in it.
+fn toc_fragments_by_chapter(toc: &[TocNode]) -> HashMap<String, Vec<String>> {
+    fn walk(nodes: &[TocNode], out: &mut HashMap<String, Vec<String>>) {
+        for node in nodes {
+            if let Some((path, fragment)) = node.href.as_deref().and_then(|h| h.split_once('#')) {
+                out.entry(path.to_string()).or_default().push(fragment.to_string());
+            }
+            walk(&node.children, out);
+        }
+    }
+    let mut out = HashMap::new();
+    walk(toc, &mut out);
+    out
+}
+
+/// Chrome writes a named destination only for an id that a link in the
+/// same document points at. A TOC entry like `ch1.xhtml#chapter-3` usually
+/// has no such link, so its bookmark could only open the chapter file's
+/// first page. One invisible link per TOC fragment makes Chrome emit the
+/// destination, so the bookmark lands on the right page.
+fn inject_anchor_links(html: &str, fragments: &[String]) -> String {
+    if fragments.is_empty() {
+        return html.to_string();
+    }
+    let links: String = fragments
+        .iter()
+        .map(|f| format!("<a href=\"#{}\" style=\"display:inline-block;width:1px;height:1px\"></a>", xml_escape_attr(f)))
+        .collect();
+    let block = format!("<div aria-hidden=\"true\" style=\"position:absolute;left:0;top:0;width:1px;height:1px;overflow:hidden\">{links}</div>");
+    match html.rfind("</body>") {
+        Some(pos) => format!("{}{}{}", &html[..pos], block, &html[pos..]),
+        None => format!("{html}{block}"),
+    }
+}
+
+fn xml_escape_attr(s: &str) -> String {
+    s.replace('&', "&amp;").replace('"', "&quot;").replace('<', "&lt;")
 }
 
 /// True if `spine_path`'s markup references `cover_href`'s filename (e.g.
@@ -777,6 +821,14 @@ fn merge_chapter_pdfs(
     document.max_id = document.objects.len() as u32;
 
     let dest_names: std::collections::HashSet<Vec<u8>> = merged_dests.iter().map(|(k, _)| k.clone()).collect();
+    // Named destination -> the page it is on, for fragment-level bookmarks.
+    let dest_pages: HashMap<Vec<u8>, ObjectId> = merged_dests
+        .iter()
+        .filter_map(|(name, dest)| {
+            let page = dest.as_array().ok()?.first()?.as_reference().ok()?;
+            Some((name.clone(), page))
+        })
+        .collect();
     if !merged_dests.is_empty() {
         let dests_id = document.add_object(Object::Dictionary(merged_dests));
         if let Ok(Object::Dictionary(dict)) = document.get_object_mut(catalog_id) {
@@ -791,7 +843,8 @@ fn merge_chapter_pdfs(
         // bookmark's target page id alongside every other object reference
         // (see processor.rs::renumber_bookmarks), so ids captured here stay
         // valid after compaction.
-        add_toc_bookmarks(&mut document, toc, None, &href_to_first_page);
+        let targets = BookmarkTargets { href_to_first_page: &href_to_first_page, href_to_prefix, dest_pages: &dest_pages };
+        add_toc_bookmarks(&mut document, toc, None, &targets);
     }
 
     document.renumber_objects();
@@ -869,22 +922,33 @@ fn fix_cross_chapter_links(
     }
 }
 
-fn add_toc_bookmarks(
-    doc: &mut lopdf::Document,
-    nodes: &[TocNode],
-    parent: Option<u32>,
-    href_to_first_page: &HashMap<String, ObjectId>,
-) {
+struct BookmarkTargets<'a> {
+    href_to_first_page: &'a HashMap<String, ObjectId>,
+    href_to_prefix: &'a HashMap<String, String>,
+    dest_pages: &'a HashMap<Vec<u8>, ObjectId>,
+}
+
+impl BookmarkTargets<'_> {
+    /// The page of the fragment's named destination if Chrome emitted one,
+    /// else the first page of the chapter. `None` if the chapter was not
+    /// rendered (for example a non-linear spine item).
+    fn page_for(&self, href: &str) -> Option<ObjectId> {
+        let (path, fragment) = href.split_once('#').map_or((href, None), |(p, f)| (p, Some(f)));
+        let fragment_page = fragment.zip(self.href_to_prefix.get(path)).and_then(|(f, prefix)| {
+            self.dest_pages.get(format!("{prefix}::{f}").as_bytes()).copied()
+        });
+        fragment_page.or_else(|| self.href_to_first_page.get(path).copied())
+    }
+}
+
+fn add_toc_bookmarks(doc: &mut lopdf::Document, nodes: &[TocNode], parent: Option<u32>, targets: &BookmarkTargets) {
     for node in nodes {
-        let target = node
-            .href
-            .as_deref()
-            .map(|h| h.split('#').next().unwrap_or(h))
-            .and_then(|h| href_to_first_page.get(h))
-            .copied()
-            .unwrap_or((0, 0));
-        let bookmark_id = doc.add_bookmark(Bookmark::new(node.title.clone(), [0.0, 0.0, 0.0], 0, target), parent);
-        add_toc_bookmarks(doc, &node.children, Some(bookmark_id), href_to_first_page);
+        let target = node.href.as_deref().and_then(|h| targets.page_for(h));
+        // An entry with no rendered target keeps its place in the outline
+        // (so its children stay grouped under it) and opens the first page.
+        let page = target.or_else(|| targets.href_to_first_page.values().min().copied()).unwrap_or((0, 0));
+        let bookmark_id = doc.add_bookmark(Bookmark::new(node.title.clone(), [0.0, 0.0, 0.0], 0, page), parent);
+        add_toc_bookmarks(doc, &node.children, Some(bookmark_id), targets);
     }
 }
 
@@ -908,6 +972,7 @@ fn add_page_decorations(doc: &mut lopdf::Document, opts: &RenderOptions, book_ti
         "Type" => "Font",
         "Subtype" => "Type1",
         "BaseFont" => "Helvetica",
+        "Encoding" => "WinAnsiEncoding",
     });
 
     let page_width_pt = opts.page_width_pt();
@@ -988,19 +1053,50 @@ fn centered_text_ops(text: &str, font_size: f64, page_width_pt: f64, y: f64) -> 
         Operation::new("g", vec![Object::Real(0.35_f32)]),
         Operation::new("Tf", vec![Object::Name(b"F_Anyform".to_vec()), Object::Real(font_size as f32)]),
         Operation::new("Td", vec![Object::Real(x as f32), Object::Real(y as f32)]),
-        Operation::new("Tj", vec![Object::string_literal(text)]),
+        Operation::new("Tj", vec![Object::string_literal(win_ansi_bytes(text))]),
         Operation::new("ET", vec![]),
         Operation::new("Q", vec![]),
     ]
 }
 
+/// A PDF "text string" (Info dictionary values). Raw UTF-8 bytes are wrong
+/// here: readers decode them as PDFDocEncoding, so "é" shows as "Ã©".
+/// Non-ASCII text must be UTF-16BE with a byte order mark, the same rule
+/// lopdf applies to bookmark titles.
+fn pdf_text_string(text: &str) -> Object {
+    if text.is_ascii() {
+        return Object::string_literal(text);
+    }
+    let mut bytes = vec![0xFE, 0xFF];
+    bytes.extend(text.encode_utf16().flat_map(u16::to_be_bytes));
+    Object::String(bytes, lopdf::StringFormat::Hexadecimal)
+}
+
+/// Encodes `text` for the standard Helvetica font with WinAnsiEncoding.
+/// That covers Latin-script languages. Characters outside it (CJK, for
+/// example) become "?": showing them would need an embedded font.
+fn win_ansi_bytes(text: &str) -> Vec<u8> {
+    const CP1252_HIGH: [(char, u8); 27] = [
+        ('€', 0x80), ('‚', 0x82), ('ƒ', 0x83), ('„', 0x84), ('…', 0x85), ('†', 0x86), ('‡', 0x87),
+        ('ˆ', 0x88), ('‰', 0x89), ('Š', 0x8A), ('‹', 0x8B), ('Œ', 0x8C), ('Ž', 0x8E), ('‘', 0x91),
+        ('’', 0x92), ('“', 0x93), ('”', 0x94), ('•', 0x95), ('–', 0x96), ('—', 0x97), ('˜', 0x98),
+        ('™', 0x99), ('š', 0x9A), ('›', 0x9B), ('œ', 0x9C), ('ž', 0x9E), ('Ÿ', 0x9F),
+    ];
+    text.chars()
+        .map(|c| match c as u32 {
+            0x20..=0x7E | 0xA0..=0xFF => c as u8,
+            _ => CP1252_HIGH.iter().find(|(ch, _)| *ch == c).map_or(b'?', |(_, b)| *b),
+        })
+        .collect()
+}
+
 fn set_metadata(doc: &mut lopdf::Document, ir: &DocumentIR) {
     let mut info = dictionary! {
-        "Title" => Object::string_literal(ir.metadata.title.clone()),
-        "Producer" => Object::string_literal("Bookdrop (anyform engine)"),
+        "Title" => pdf_text_string(&ir.metadata.title),
+        "Producer" => pdf_text_string("Bookdrop (anyform engine)"),
     };
     if let Some(author) = &ir.metadata.author {
-        info.set("Author", Object::string_literal(author.clone()));
+        info.set("Author", pdf_text_string(author));
     }
     let info_id = doc.add_object(info);
     doc.trailer.set("Info", info_id);

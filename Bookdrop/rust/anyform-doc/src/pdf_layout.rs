@@ -600,6 +600,7 @@ fn classify_blocks(lines: &[Line]) -> ClassifiedBlocks {
         };
     }
 
+    let median_gap = median_gap(lines);
     let mut prev_line: Option<&Line> = None;
     for line in lines {
         if line.text.trim().is_empty() {
@@ -623,7 +624,6 @@ fn classify_blocks(lines: &[Line]) -> ClassifiedBlocks {
         let mut break_before = false;
         if let Some(prev) = prev_line {
             let gap = prev.y_bottom - line.y_top;
-            let median_gap = median_gap(lines);
             if prev.page != line.page {
                 break_before = false; // cross-page handled by caller
             } else if gap > PARAGRAPH_GAP_MULTIPLIER * median_gap
