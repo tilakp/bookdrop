@@ -112,7 +112,7 @@ impl OutputPlugin<DocumentIR> for HtmlOutput {
         }
 
         let html = format!(
-            "<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"utf-8\">\n<title>{title}</title>\n<style>\n{css}\n\
+            "<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"utf-8\">\n{CONTENT_SECURITY_POLICY}\n<title>{title}</title>\n<style>\n{css}\n\
              .bookdrop-cover {{ max-width: 100%; display: block; margin: 0 auto 2em; }}\n\
              .bookdrop-toc {{ margin-bottom: 2em; }}\n</style>\n</head>\n<body>\n{body}\n</body>\n</html>\n",
             title = xml_escape(&ir.metadata.title),
@@ -126,6 +126,13 @@ impl OutputPlugin<DocumentIR> for HtmlOutput {
         Ok(())
     }
 }
+
+/// Book markup is untrusted, and the user opens this file in a browser.
+/// The page is self-contained (data: images, inline CSS), so it needs no
+/// scripts and no network: this blocks both, including inline event
+/// handlers, `javascript:` links and remote tracking images.
+const CONTENT_SECURITY_POLICY: &str = "<meta http-equiv=\"Content-Security-Policy\" \
+     content=\"default-src 'none'; img-src data:; style-src 'unsafe-inline'; font-src data:\">";
 
 /// Best-effort: matches manifest hrefs (and their bare filename) verbatim
 /// against quoted attribute values and CSS `url(...)` references. Doesn't
@@ -160,9 +167,13 @@ fn rewrite_references(text: &str, data_uris: &HashMap<String, String>) -> String
 
     let mut result = text.to_string();
     for (href, data_uri) in &candidates {
-        result = result.replace(&format!("\"{href}\""), &format!("\"{data_uri}\""));
-        result = result.replace(&format!("'{href}'"), &format!("'{data_uri}'"));
-        result = result.replace(&format!("({href})"), &format!("({data_uri})"));
+        // IR hrefs are decoded paths; markup usually has the URL-encoded form.
+        let encoded = crate::href::relative_url("", href);
+        for form in [href.as_str(), encoded.as_str()] {
+            result = result.replace(&format!("\"{form}\""), &format!("\"{data_uri}\""));
+            result = result.replace(&format!("'{form}'"), &format!("'{data_uri}'"));
+            result = result.replace(&format!("({form})"), &format!("({data_uri})"));
+        }
     }
     for (href, data_uri) in &candidates {
         if let Some(filename) = href.rsplit('/').next() {

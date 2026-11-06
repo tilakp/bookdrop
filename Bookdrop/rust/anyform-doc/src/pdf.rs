@@ -1,15 +1,18 @@
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 
 use anyform_core::{ConvError, Log, OptionSpec, Options, OutputPlugin};
+use headless_chrome::browser::tab::RequestPausedDecision;
+use headless_chrome::protocol::cdp::{Emulation, Fetch, Network};
 use headless_chrome::types::PrintToPdfOptions;
 use headless_chrome::{Browser, LaunchOptions, Tab};
 use lopdf::content::{Content, Operation};
 use lopdf::{dictionary, Bookmark, Dictionary, Object, ObjectId, Stream};
 use regex::Regex;
 
+use crate::href;
 use crate::ir::{DocumentIR, SpineItem, TocNode};
 
 /// Renders each spine chapter through a bundled headless-Chromium binary
@@ -46,9 +49,7 @@ impl OutputPlugin<DocumentIR> for PdfOutput {
         let chromium_path = resolve_chromium_path(opts)?;
         log.info(&format!("launching {}", chromium_path.display()));
         let browser = launch_browser(&chromium_path)?;
-        let tab = browser
-            .new_tab()
-            .map_err(|e| ConvError::Other(format!("failed to open a tab: {e}")))?;
+        let tab = open_locked_down_tab(&browser, &ir.content_dir)?;
 
         // (href of the spine item this PDF chunk came from, None for the
         // cover page — used afterwards to point TOC bookmarks at the right
@@ -162,9 +163,7 @@ fn render_chapters_parallel(
             .chunks(chunk_size)
             .map(|chunk| {
                 scope.spawn(move || -> ChunkResult {
-                    let tab = browser
-                        .new_tab()
-                        .map_err(|e| ConvError::Other(format!("failed to open a tab: {e}")))?;
+                    let tab = open_locked_down_tab(browser, content_dir)?;
                     let mut out = Vec::with_capacity(chunk.len());
                     for &i in chunk {
                         // Each worker polls the same shared cancellation flag
@@ -558,11 +557,51 @@ fn wait_for_fonts_ready(tab: &Tab) {
     );
 }
 
+/// Book markup is untrusted input. Each tab runs with page scripts off and
+/// may load only files inside the book (and `data:` URIs): no network, and
+/// no other local files, which an `<iframe src="file:///...">` could
+/// otherwise print into the PDF.
+fn open_locked_down_tab(browser: &Browser, content_dir: &Path) -> Result<Arc<Tab>, ConvError> {
+    fn fail(what: &str, e: impl std::fmt::Display) -> ConvError {
+        ConvError::Other(format!("failed to {what}: {e}"))
+    }
+    let tab = browser.new_tab().map_err(|e| fail("open a tab", e))?;
+    tab.call_method(Emulation::SetScriptExecutionDisabled { value: true })
+        .map_err(|e| fail("disable scripts", e))?;
+
+    let book_root = content_dir.canonicalize()?;
+    let every_request =
+        Fetch::RequestPattern { url_pattern: Some("*".into()), resource_Type: None, request_stage: Some(Fetch::RequestStage::Request) };
+    tab.enable_fetch(Some(&[every_request]), None).map_err(|e| fail("filter requests", e))?;
+    tab.enable_request_interception(Arc::new(move |_transport, _session, event: Fetch::events::RequestPausedEvent| {
+        if url_is_inside_book(&event.params.request.url, &book_root) {
+            RequestPausedDecision::Continue(None)
+        } else {
+            RequestPausedDecision::Fail(Fetch::FailRequest {
+                request_id: event.params.request_id,
+                error_reason: Network::ErrorReason::BlockedByClient,
+            })
+        }
+    }))
+    .map_err(|e| fail("filter requests", e))?;
+    Ok(tab)
+}
+
+fn url_is_inside_book(url: &str, book_root: &Path) -> bool {
+    if url.starts_with("data:") {
+        return true;
+    }
+    let Some(rest) = url.strip_prefix("file://") else { return false };
+    let path = rest.split(['?', '#']).next().unwrap_or("");
+    let Some(decoded) = href::percent_decode(path) else { return false };
+    Path::new(&decoded).canonicalize().is_ok_and(|p| p.starts_with(book_root))
+}
+
 fn launch_browser(path: &Path) -> Result<Browser, ConvError> {
     let options = LaunchOptions::default_builder()
         .path(Some(path.to_path_buf()))
         .headless(true)
-        .sandbox(false)
+        .sandbox(true)
         .build()
         .map_err(|e| ConvError::Other(format!("invalid chromium launch options: {e}")))?;
     Browser::new(options).map_err(|e| ConvError::Other(format!("failed to launch chromium: {e}")))
@@ -804,11 +843,13 @@ fn fix_cross_chapter_links(
             continue;
         };
         let uri = String::from_utf8_lossy(uri_bytes).into_owned();
-        let (path, fragment) = match uri.split_once('#') {
+        let (encoded_path, fragment) = match uri.split_once('#') {
             Some((p, f)) => (p, Some(f)),
             None => (uri.as_str(), None),
         };
-        let Some(href) = path_to_href.get(path) else { continue };
+        // Chrome percent-encodes the URI; `path_to_href` keys are plain paths.
+        let Some(path) = href::percent_decode(encoded_path) else { continue };
+        let Some(href) = path_to_href.get(&path) else { continue };
         let prefix = &href_to_prefix[*href];
 
         let exact = fragment

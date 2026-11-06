@@ -1,6 +1,7 @@
 mod docx;
 mod epub;
 mod epub_output;
+mod href;
 mod html;
 mod htmltext;
 mod ir;

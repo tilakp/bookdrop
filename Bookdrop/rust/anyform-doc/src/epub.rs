@@ -1,12 +1,14 @@
 use std::collections::{HashMap, HashSet};
+use std::io::Read;
 use std::path::Path;
 
 use anyform_core::{ConvError, InputPlugin, Log, Options, TempDir};
 
+use crate::href;
+
 use crate::ir::{DocumentIR, Metadata, Resource, SpineItem, TocNode};
 
-/// Parsed contents of the EPUB's .opf package document — mirrors Bookdrop's
-/// Swift `OPFDocument` (`Sources/Bookdrop/Services/EpubXML.swift`).
+/// Parsed contents of the EPUB's .opf package document.
 struct OpfDocument {
     title: Option<String>,
     author: Option<String>,
@@ -68,7 +70,10 @@ impl InputPlugin<DocumentIR> for EpubInput {
         if !container_path.exists() {
             return Err(ConvError::MissingFile("META-INF/container.xml".into()));
         }
-        let opf_relative = parse_container(&container_path)?;
+        let opf_full_path = parse_container(&container_path)?;
+        let opf_relative = href::resolve("", &opf_full_path)
+            .map(|(path, _)| path)
+            .ok_or_else(|| ConvError::Malformed(format!("container.xml points outside the book: {opf_full_path}")))?;
         let opf_path = work_path.join(&opf_relative);
         if !opf_path.exists() {
             return Err(ConvError::MissingFile(opf_relative));
@@ -123,13 +128,22 @@ impl InputPlugin<DocumentIR> for EpubInput {
     }
 }
 
+/// Limits that stop a hostile archive (a "zip bomb") from filling the disk.
+/// Far above any real book: the largest Gutenberg EPUBs are under 100 MB.
+const MAX_ARCHIVE_ENTRIES: usize = 20_000;
+const MAX_EXTRACTED_BYTES: u64 = 2 * 1024 * 1024 * 1024;
+
 /// Extracts the EPUB into a fresh temp directory, deleted when the returned
 /// `TempDir` drops. `enclosed_name` drops entries that would escape it.
 fn extract_epub(input: &Path) -> Result<TempDir, ConvError> {
     let file = std::fs::File::open(input)?;
     let mut archive = zip::ZipArchive::new(file).map_err(|_| ConvError::InvalidArchive)?;
+    if archive.len() > MAX_ARCHIVE_ENTRIES {
+        return Err(ConvError::Malformed(format!("the archive has too many files ({})", archive.len())));
+    }
 
     let work_dir = anyform_core::fresh_work_dir("epub-")?;
+    let mut budget = MAX_EXTRACTED_BYTES;
 
     for i in 0..archive.len() {
         let mut entry = archive.by_index(i).map_err(|_| ConvError::InvalidArchive)?;
@@ -145,7 +159,12 @@ fn extract_epub(input: &Path) -> Result<TempDir, ConvError> {
             std::fs::create_dir_all(parent)?;
         }
         let mut out = std::fs::File::create(&dest)?;
-        std::io::copy(&mut entry, &mut out)?;
+        // Count real decompressed bytes, not the size the header claims.
+        let written = std::io::copy(&mut (&mut entry).take(budget + 1), &mut out)?;
+        if written > budget {
+            return Err(ConvError::Malformed("the archive expands to more than 2 GB".into()));
+        }
+        budget -= written;
     }
 
     Ok(work_dir)
@@ -344,7 +363,13 @@ fn parse_opf(opf_path: &Path) -> Result<OpfDocument, ConvError> {
         .descendants()
         .filter(|n| n.is_element() && n.tag_name().name() == "item")
     {
-        let (Some(id), Some(href)) = (item.attribute("id"), item.attribute("href")) else {
+        let (Some(id), Some(raw_href)) = (item.attribute("id"), item.attribute("href")) else {
+            continue;
+        };
+        // Items that point outside the book (absolute paths, `file:` or
+        // `http:` URLs, `../` above the root) are dropped here, so no
+        // output plugin can ever read a file that is not part of the book.
+        let Some((href, _)) = href::resolve("", raw_href) else {
             continue;
         };
         let media_type = item.attribute("media-type").unwrap_or("").to_string();
@@ -358,7 +383,7 @@ fn parse_opf(opf_path: &Path) -> Result<OpfDocument, ConvError> {
             id.to_string(),
             Resource {
                 id: id.to_string(),
-                href: href.to_string(),
+                href,
                 media_type,
                 properties,
             },
@@ -401,7 +426,7 @@ fn parse_opf(opf_path: &Path) -> Result<OpfDocument, ConvError> {
 fn parse_toc(opf: &OpfDocument, content_dir: &Path) -> Vec<TocNode> {
     if let Some(nav_item) = opf.manifest.values().find(|r| r.properties.contains("nav")) {
         let nav_path = content_dir.join(&nav_item.href);
-        if let Some(nodes) = parse_nav_toc(&nav_path) {
+        if let Some(nodes) = parse_nav_toc(&nav_path, href::parent_dir(&nav_item.href)) {
             if !nodes.is_empty() {
                 return nodes;
             }
@@ -410,7 +435,7 @@ fn parse_toc(opf: &OpfDocument, content_dir: &Path) -> Vec<TocNode> {
     if let Some(ncx_id) = &opf.toc_ncx_id {
         if let Some(ncx_item) = opf.manifest.get(ncx_id) {
             let ncx_path = content_dir.join(&ncx_item.href);
-            if let Some(nodes) = parse_ncx_toc(&ncx_path) {
+            if let Some(nodes) = parse_ncx_toc(&ncx_path, href::parent_dir(&ncx_item.href)) {
                 return nodes;
             }
         }
@@ -418,8 +443,18 @@ fn parse_toc(opf: &OpfDocument, content_dir: &Path) -> Vec<TocNode> {
     Vec::new()
 }
 
+/// TOC links are relative to the TOC document's own folder. Stores them in
+/// the IR's canonical form (relative to `content_dir`), keeping the fragment.
+fn canonical_toc_href(base_dir: &str, raw: Option<&str>) -> Option<String> {
+    let (path, fragment) = href::resolve(base_dir, raw?)?;
+    Some(match fragment {
+        Some(f) => format!("{path}#{f}"),
+        None => path,
+    })
+}
+
 /// EPUB3 `<nav epub:type="toc">` — the `<ol><li><a>` tree it contains.
-fn parse_nav_toc(path: &Path) -> Option<Vec<TocNode>> {
+fn parse_nav_toc(path: &Path, base_dir: &str) -> Option<Vec<TocNode>> {
     let xml = std::fs::read_to_string(path).ok()?;
     let doc = parse_xml(&xml).ok()?;
     let nav = doc.descendants().find(|n| {
@@ -431,10 +466,10 @@ fn parse_nav_toc(path: &Path) -> Option<Vec<TocNode>> {
         .children()
         .chain(nav.descendants())
         .find(|n| n.is_element() && n.tag_name().name() == "ol")?;
-    Some(parse_ol(ol))
+    Some(parse_ol(ol, base_dir))
 }
 
-fn parse_ol(ol: roxmltree::Node) -> Vec<TocNode> {
+fn parse_ol(ol: roxmltree::Node, base_dir: &str) -> Vec<TocNode> {
     ol.children()
         .filter(|n| n.is_element() && n.tag_name().name() == "li")
         .filter_map(|li| {
@@ -443,11 +478,11 @@ fn parse_ol(ol: roxmltree::Node) -> Vec<TocNode> {
                 .chain(li.descendants())
                 .find(|n| n.is_element() && n.tag_name().name() == "a")?;
             let title = element_text(a);
-            let href = a.attribute("href").map(String::from);
+            let href = canonical_toc_href(base_dir, a.attribute("href"));
             let children = li
                 .children()
                 .find(|n| n.is_element() && n.tag_name().name() == "ol")
-                .map(parse_ol)
+                .map(|ol| parse_ol(ol, base_dir))
                 .unwrap_or_default();
             Some(TocNode { title, href, children })
         })
@@ -455,16 +490,16 @@ fn parse_ol(ol: roxmltree::Node) -> Vec<TocNode> {
 }
 
 /// EPUB2 `toc.ncx` — the `<navMap>` document.
-fn parse_ncx_toc(path: &Path) -> Option<Vec<TocNode>> {
+fn parse_ncx_toc(path: &Path, base_dir: &str) -> Option<Vec<TocNode>> {
     let xml = std::fs::read_to_string(path).ok()?;
     let doc = parse_xml(&xml).ok()?;
     let nav_map = doc
         .descendants()
         .find(|n| n.is_element() && n.tag_name().name() == "navMap")?;
-    Some(parse_nav_points(nav_map))
+    Some(parse_nav_points(nav_map, base_dir))
 }
 
-fn parse_nav_points(parent: roxmltree::Node) -> Vec<TocNode> {
+fn parse_nav_points(parent: roxmltree::Node, base_dir: &str) -> Vec<TocNode> {
     parent
         .children()
         .filter(|n| n.is_element() && n.tag_name().name() == "navPoint")
@@ -479,12 +514,12 @@ fn parse_nav_points(parent: roxmltree::Node) -> Vec<TocNode> {
                 })
                 .map(element_text)
                 .unwrap_or_default();
-            let href = np
+            let src = np
                 .children()
                 .find(|n| n.is_element() && n.tag_name().name() == "content")
-                .and_then(|c| c.attribute("src"))
-                .map(String::from);
-            let children = parse_nav_points(np);
+                .and_then(|c| c.attribute("src"));
+            let href = canonical_toc_href(base_dir, src);
+            let children = parse_nav_points(np, base_dir);
             TocNode { title, href, children }
         })
         .collect()

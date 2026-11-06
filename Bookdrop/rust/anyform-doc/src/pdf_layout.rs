@@ -449,7 +449,7 @@ pub(crate) fn detect_columns(pages: &[PageText]) -> ColumnVerdict {
             continue;
         }
         total_pages_with_text += 1;
-        match detect_page_columns(&page.glyphs) {
+        match detect_page_columns(page) {
             ColumnVerdict::SingleColumn => {}
             ColumnVerdict::TwoColumn { .. } => two_column_pages += 1,
             ColumnVerdict::MultiColumn(_) => multi_column_pages += 1,
@@ -468,7 +468,7 @@ pub(crate) fn detect_columns(pages: &[PageText]) -> ColumnVerdict {
         // Recompute a representative gutter_x from the first page that
         // detected one, for the caller's escape-hatch ordering (v1.1).
         for page in pages {
-            if let ColumnVerdict::TwoColumn { gutter_x } = detect_page_columns(&page.glyphs) {
+            if let ColumnVerdict::TwoColumn { gutter_x } = detect_page_columns(page) {
                 return ColumnVerdict::TwoColumn { gutter_x };
             }
         }
@@ -476,9 +476,12 @@ pub(crate) fn detect_columns(pages: &[PageText]) -> ColumnVerdict {
     ColumnVerdict::SingleColumn
 }
 
-fn detect_page_columns(glyphs: &[Glyph]) -> ColumnVerdict {
-    let min_x = glyphs.iter().map(|g| g.x0).fold(f32::MAX, f32::min);
-    let max_x = glyphs.iter().map(|g| g.x1).fold(f32::MIN, f32::max);
+fn detect_page_columns(page: &PageText) -> ColumnVerdict {
+    let glyphs = &page.glyphs;
+    // Clamped to the page: a hostile PDF can report glyph boxes millions of
+    // points wide, and the coverage histogram below has one bin per 2pt.
+    let min_x = glyphs.iter().map(|g| g.x0).fold(f32::MAX, f32::min).max(0.0);
+    let max_x = glyphs.iter().map(|g| g.x1).fold(f32::MIN, f32::max).min(page.width.max(1.0));
     let text_width = max_x - min_x;
     if text_width <= 0.0 {
         return ColumnVerdict::SingleColumn;

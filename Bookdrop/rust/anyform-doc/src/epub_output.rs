@@ -6,6 +6,7 @@ use sha1::{Digest, Sha1};
 use zip::write::FileOptions;
 use zip::{CompressionMethod, ZipWriter};
 
+use crate::href;
 use crate::ir::{DocumentIR, Resource, TocNode};
 
 /// Repackages a `DocumentIR` back into a valid EPUB3 file — a faithful
@@ -137,7 +138,7 @@ impl OutputPlugin<DocumentIR> for EpubOutput {
         };
         zip.start_file(nav_zip_path, FileOptions::default())
             .map_err(|e| ConvError::Other(format!("failed to start nav entry: {e}")))?;
-        zip.write_all(render_nav_xhtml(&ir.toc, &ir.metadata.title).as_bytes())?;
+        zip.write_all(render_nav_xhtml(&ir.toc, &ir.metadata.title, href::parent_dir(&nav_href)).as_bytes())?;
 
         let Some(ncx_zip_path) = normalize_oebps_path(&ncx_href) else {
             return Err(ConvError::Other(format!("ncx path escapes the archive root: {ncx_href}")));
@@ -145,7 +146,9 @@ impl OutputPlugin<DocumentIR> for EpubOutput {
         let ncx_id_str = ncx_id.unwrap_or_else(|| "ncx".to_string());
         zip.start_file(ncx_zip_path, FileOptions::default())
             .map_err(|e| ConvError::Other(format!("failed to start ncx entry: {e}")))?;
-        zip.write_all(render_toc_ncx(&ir.toc, &ir.metadata.title, &deterministic_identifier(ir)).as_bytes())?;
+        zip.write_all(
+            render_toc_ncx(&ir.toc, &ir.metadata.title, &deterministic_identifier(ir), href::parent_dir(&ncx_href)).as_bytes(),
+        )?;
 
         log.progress(0.95, "Writing package document");
         let nav_id_str = nav_id.unwrap_or_else(|| "nav".to_string());
@@ -204,20 +207,33 @@ fn xml_escape(s: &str) -> String {
     out
 }
 
-fn render_nav_xhtml(toc: &[TocNode], title: &str) -> String {
-    fn render_list(nodes: &[TocNode]) -> String {
+/// IR TOC hrefs are canonical (relative to `content_dir`). Markup in a TOC
+/// file needs them relative to that file's own folder, URL-encoded.
+fn toc_link(node: &TocNode, toc_dir: &str) -> String {
+    let Some(target) = node.href.as_deref() else { return String::new() };
+    let (path, fragment) = target.split_once('#').map_or((target, None), |(p, f)| (p, Some(f)));
+    let mut url = href::relative_url(toc_dir, path);
+    if let Some(f) = fragment {
+        url.push('#');
+        url.push_str(f);
+    }
+    xml_escape(&url)
+}
+
+fn render_nav_xhtml(toc: &[TocNode], title: &str, nav_dir: &str) -> String {
+    fn render_list(nodes: &[TocNode], nav_dir: &str) -> String {
         if nodes.is_empty() {
             return String::new();
         }
         let mut out = String::from("<ol>\n");
         for node in nodes {
             out.push_str("<li><a href=\"");
-            out.push_str(&xml_escape(node.href.as_deref().unwrap_or("")));
+            out.push_str(&toc_link(node, nav_dir));
             out.push_str("\">");
             out.push_str(&xml_escape(&node.title));
             out.push_str("</a>");
             if !node.children.is_empty() {
-                out.push_str(&render_list(&node.children));
+                out.push_str(&render_list(&node.children, nav_dir));
             }
             out.push_str("</li>\n");
         }
@@ -232,13 +248,13 @@ fn render_nav_xhtml(toc: &[TocNode], title: &str) -> String {
          <head><title>{title}</title></head>\n\
          <body>\n<nav epub:type=\"toc\" id=\"toc\">\n<h1>{title}</h1>\n{list}</nav>\n</body>\n</html>\n",
         title = xml_escape(title),
-        list = render_list(toc),
+        list = render_list(toc, nav_dir),
     )
 }
 
-fn render_toc_ncx(toc: &[TocNode], title: &str, identifier: &str) -> String {
+fn render_toc_ncx(toc: &[TocNode], title: &str, identifier: &str, ncx_dir: &str) -> String {
     let mut play_order = 0u32;
-    fn render_nav_points(nodes: &[TocNode], play_order: &mut u32) -> String {
+    fn render_nav_points(nodes: &[TocNode], play_order: &mut u32, ncx_dir: &str) -> String {
         let mut out = String::new();
         for node in nodes {
             *play_order += 1;
@@ -248,9 +264,9 @@ fn render_toc_ncx(toc: &[TocNode], title: &str, identifier: &str) -> String {
                  <content src=\"{href}\"/>\n",
                 po = play_order,
                 title = xml_escape(&node.title),
-                href = xml_escape(node.href.as_deref().unwrap_or("")),
+                href = toc_link(node, ncx_dir),
             ));
-            out.push_str(&render_nav_points(&node.children, play_order));
+            out.push_str(&render_nav_points(&node.children, play_order, ncx_dir));
             out.push_str("</navPoint>\n");
         }
         out
@@ -265,7 +281,7 @@ fn render_toc_ncx(toc: &[TocNode], title: &str, identifier: &str) -> String {
          <navMap>\n{points}</navMap>\n</ncx>\n",
         identifier = xml_escape(identifier),
         title = xml_escape(title),
-        points = render_nav_points(toc, &mut play_order),
+        points = render_nav_points(toc, &mut play_order, ncx_dir),
     )
 }
 
@@ -285,7 +301,7 @@ fn render_opf(
         manifest.push_str(&format!(
             "<item id=\"{id}\" href=\"{href}\" media-type=\"{media_type}\"{properties}/>\n",
             id = xml_escape(&item.id),
-            href = xml_escape(&item.href),
+            href = xml_escape(&href::relative_url("", &item.href)),
             media_type = xml_escape(&item.media_type),
             properties = manifest_properties_attr(&item.properties),
         ));
@@ -293,13 +309,13 @@ fn render_opf(
     if synthesize_nav {
         manifest.push_str(&format!(
             "<item id=\"{nav_id}\" href=\"{href}\" media-type=\"application/xhtml+xml\" properties=\"nav\"/>\n",
-            href = xml_escape(nav_href),
+            href = xml_escape(&href::relative_url("", nav_href)),
         ));
     }
     if synthesize_ncx {
         manifest.push_str(&format!(
             "<item id=\"{ncx_id}\" href=\"{href}\" media-type=\"application/x-dtbncx+xml\"/>\n",
-            href = xml_escape(ncx_href),
+            href = xml_escape(&href::relative_url("", ncx_href)),
         ));
     }
 

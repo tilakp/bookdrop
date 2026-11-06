@@ -4,11 +4,12 @@ use std::path::PathBuf;
 use serde::Serialize;
 
 /// Kept shallow deliberately: a manifest of resources plus an ordered spine
-/// of *raw normalized HTML*, not a fully typed DOM tree — see
-/// ANYFORM-FULL-SPEC.md §2. Field names/shapes deliberately mirror
-/// Bookdrop's Swift `Book`/`SpineItem`/`ManifestItem`/`TocNode`
-/// (`Sources/Bookdrop/Models/Book.swift`) so a JSON dump of this struct is a
-/// drop-in replacement for what `EpubParser.parse` currently returns.
+/// of raw chapter XHTML, not a typed DOM tree (see ANYFORM-FULL-SPEC.md §2).
+///
+/// Every href in the IR (manifest, spine, TOC, cover) is canonical: a
+/// percent-decoded path relative to `content_dir`, with no `.`/`..`
+/// segments, made by `href::resolve`. So `content_dir.join(href)` always
+/// stays inside the book, and plugins can compare hrefs as plain strings.
 #[derive(Debug, Serialize)]
 pub struct DocumentIR {
     pub metadata: Metadata,
@@ -62,13 +63,8 @@ pub struct SpineItem {
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct TocNode {
     pub title: String,
-    /// Relative to the TOC document's own directory (the EPUB3 nav
-    /// document, or the EPUB2 `toc.ncx`) - *not* `content_dir` - since
-    /// `epub.rs`'s parser stores the raw href/src attribute verbatim and
-    /// only uses `content_dir` to locate the nav/ncx file itself. May
-    /// include a "#fragment". `EpubOutput` must regenerate the nav/ncx at
-    /// the same relative directory as the source or every link here
-    /// breaks - see `nested-nav.epub` in the test fixtures.
+    /// Canonical like every IR href (see `DocumentIR`), plus an optional
+    /// "#fragment". `None` when the source entry had no usable link.
     pub href: Option<String>,
     pub children: Vec<TocNode>,
 }

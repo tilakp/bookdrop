@@ -113,17 +113,12 @@ fn epub2_ncx_only_source_gets_an_epub3_nav() {
 
 #[test]
 fn nested_toc_directory_keeps_hrefs_valid() {
-    // The only fixture that pins the "TocNode.href is relative to the nav
-    // document's own directory, not content_dir" finding: nested-nav.epub's
-    // nav lives at OEBPS/text/nav.xhtml with chapter hrefs written relative
-    // to text/ (bare "ch1.xhtml", not "text/ch1.xhtml"). If EpubOutput ever
-    // regenerated the nav at the wrong directory, every TOC link would
-    // silently point at a nonexistent file - EpubInput's own nav-then-ncx
-    // fallback masks this from a plain before/after `toc` comparison (both
-    // the nav and the always-generated ncx carry identical href text, so a
-    // broken nav silently falls through to the ncx with the same-looking
-    // TOC), so this checks the zip entry's *physical location* directly
-    // against what the manifest itself declares, not just parsed TOC text.
+    // nested-nav.epub's nav lives at OEBPS/text/nav.xhtml and links to its
+    // chapters as bare "ch1.xhtml" (relative to text/). EpubInput stores
+    // TOC hrefs canonically ("text/ch1.xhtml"); EpubOutput must write them
+    // back relative to the nav's folder. Checks the physical nav location
+    // and the raw link text, not only the parsed TOC, since a broken nav
+    // falls through to the ncx and would hide the error.
     let output = std::env::temp_dir().join(format!("anyform-epub-out-nested-toc-{}.epub", std::process::id()));
     let registry = anyform_doc::document_registry();
     registry.convert(&fixtures_dir().join("nested-nav.epub"), &output, &Options::new(), &StdLog).expect("EpubOutput should convert");
@@ -137,7 +132,13 @@ fn nested_toc_directory_keeps_hrefs_valid() {
         buf
     };
     assert!(opf_bytes.contains("href=\"text/nav.xhtml\""), "OPF should still declare the nav at its original directory");
-    assert!(archive.by_name("OEBPS/text/nav.xhtml").is_ok(), "the regenerated nav file must physically exist at the directory its own manifest entry declares");
+    let nav = {
+        let mut entry = archive.by_name("OEBPS/text/nav.xhtml").expect("the regenerated nav must exist where the manifest declares it");
+        let mut buf = String::new();
+        std::io::Read::read_to_string(&mut entry, &mut buf).unwrap();
+        buf
+    };
+    assert!(nav.contains("href=\"ch1.xhtml\""), "nav links must be relative to the nav's own folder: {nav}");
 
     let after = EpubInput.convert(&output, &Options::new(), &StdLog).expect("regenerated EPUB should parse");
     let _ = std::fs::remove_file(&output);
@@ -146,7 +147,7 @@ fn nested_toc_directory_keeps_hrefs_valid() {
     assert_eq!(before.toc, after.toc);
     for node in &after.toc {
         let href = node.href.as_deref().expect("toc node should have an href");
-        let resolved = after.content_dir.join("text").join(href.split('#').next().unwrap());
+        let resolved = after.content_dir.join(href.split('#').next().unwrap());
         assert!(resolved.exists(), "TOC link {href} (resolved to {resolved:?}) should point at a real file");
     }
 }
