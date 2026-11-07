@@ -91,7 +91,7 @@ swift build
 swift test
 ```
 
-52 Swift tests plus 124 Rust tests. Most of the PDF-related ones render through the real bundled
+52 Swift tests plus 125 Rust tests. Most of the PDF-related ones render through the real bundled
 Chromium binary (or read through the real bundled PDF reader) rather than mocking it, so expect
 the suite to take about 30 seconds.
 

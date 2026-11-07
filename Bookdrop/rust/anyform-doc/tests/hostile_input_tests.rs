@@ -228,3 +228,42 @@ fn pdf_output_prints_the_prepared_markup_and_leaves_the_book_unchanged() {
     let text = pdf_text(&pdf, &scratch);
     assert!(text.contains("STYLED-AWAY") && text.contains("Visible."), "prepared markup was not printed: {text}");
 }
+
+#[test]
+fn pdf_output_renders_chapters_with_hash_or_question_mark_in_the_file_name() {
+    let scratch = Scratch::new("pdf-url-chars");
+    let book = scratch.path("book.epub");
+    write_epub(
+        &book,
+        "Odd Names",
+        &[("c1", "one%23a.xhtml"), ("c2", "two%3Fb.xhtml")],
+        &[
+            ("OEBPS/one#a.xhtml", chapter("<p>HASH-CHAPTER-TEXT</p>")),
+            ("OEBPS/two?b.xhtml", chapter(r#"<p>QUESTION-CHAPTER-TEXT <a href="one%23a.xhtml">back</a></p>"#)),
+        ],
+    );
+    let pdf = scratch.path("out.pdf");
+    convert(&book, &pdf).expect("chapters with # or ? in the file name must render");
+    let text = pdf_text(&pdf, &scratch);
+    assert!(text.contains("HASH-CHAPTER-TEXT"), "the chapter named one#a.xhtml is missing: {text}");
+    assert!(text.contains("QUESTION-CHAPTER-TEXT"), "the chapter named two?b.xhtml is missing: {text}");
+
+    // The link to one#a.xhtml must become a jump inside the PDF, not a
+    // file:// URI to a temporary file.
+    let doc = lopdf::Document::load(&pdf).unwrap();
+    let file_uris = doc
+        .objects
+        .values()
+        .filter_map(|o| o.as_dict().ok())
+        .filter_map(|d| d.get(b"A").and_then(|a| a.as_dict()).and_then(|a| a.get(b"URI")).and_then(|u| u.as_str()).ok())
+        .filter(|uri| uri.starts_with(b"file:"))
+        .count();
+    let internal_links = doc
+        .objects
+        .values()
+        .filter_map(|o| o.as_dict().ok())
+        .filter(|d| d.get(b"Subtype").and_then(|s| s.as_name()).ok() == Some(b"Link".as_slice()) && d.has(b"Dest"))
+        .count();
+    assert_eq!(file_uris, 0, "a link was left pointing at a local file");
+    assert!(internal_links >= 1, "the link to one#a.xhtml did not become an internal jump");
+}

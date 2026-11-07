@@ -136,7 +136,7 @@ impl BookTab {
     }
 
     fn navigate_and_print(&self, path: &Path, print_opts: PrintToPdfOptions, label: &str) -> Result<lopdf::Document, ConvError> {
-        let url = format!("file://{}", path.display());
+        let url = file_url(path);
         self.tab
             .navigate_to(&url)
             .map_err(|e| ConvError::Other(format!("failed to load {label}: {e}")))?;
@@ -308,6 +308,15 @@ fn url_is_inside_book(url: &str, book_root: &Path) -> bool {
         return true;
     }
     file_url_path(url).and_then(|p| p.canonicalize().ok()).is_some_and(|p| p.starts_with(book_root))
+}
+
+/// The `file://` URL of `path`. Each segment is percent-encoded: a raw `#`
+/// or `?` in a file name would otherwise start a fragment or a query, and
+/// Chrome would ask for a different file.
+fn file_url(path: &Path) -> String {
+    let path = path.to_string_lossy();
+    let encoded: Vec<String> = path.split('/').map(href::percent_encode).collect();
+    format!("file://{}", encoded.join("/"))
 }
 
 /// The local path a `file://` URL names, without its query or fragment.

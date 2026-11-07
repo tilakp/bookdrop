@@ -97,7 +97,7 @@ limitations of EPUB-out (non-linear spine items; source `dc:identifier`).
   which does it automatically).
 - Build the Rust engine: `cd Bookdrop/rust && cargo test` (needs
   `scripts/fetch-chromium.sh`/`scripts/fetch-pdfium.sh` run once first for
-  the PDF-output/PDF-input tests): 124 tests.
+  the PDF-output/PDF-input tests): 125 tests.
 - Test: `swift test`: 52 tests (~40s, mostly real Rust/Chromium PDF
   renders now, not mocked), all use scratch directories / an in-memory
   `KeyValueStore` so they never touch real user data.
