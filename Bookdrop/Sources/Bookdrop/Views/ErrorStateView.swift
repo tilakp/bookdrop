@@ -4,52 +4,69 @@ struct ErrorStateView: View {
     let message: String
     let hint: String?
     let technicalDetails: String?
-    var onTryAgain: () -> Void
+    var onChooseAnother: () -> Void
 
     @State private var showDetails = false
 
     var body: some View {
-        VStack(spacing: 16) {
+        VStack(spacing: 18) {
             Spacer()
 
-            Image(systemName: "xmark.circle.fill")
-                .font(.system(size: 48))
-                .foregroundStyle(.red)
+            Image(systemName: "exclamationmark.triangle.fill")
+                .symbolRenderingMode(.multicolor)
+                .font(.system(size: 52))
+                .accessibilityHidden(true)
 
-            Text("Couldn't convert this book")
-                .font(.title3.weight(.semibold))
-
-            VStack(spacing: 4) {
+            VStack(spacing: 8) {
                 Text(message)
+                    .font(.title3.weight(.semibold))
                     .multilineTextAlignment(.center)
                 if let hint {
                     Text(hint)
+                        .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
                 }
             }
-            .foregroundStyle(.secondary)
-            .frame(maxWidth: 380)
+            .frame(maxWidth: 420)
+            .textSelection(.enabled)
 
-            Button("Try Again", action: onTryAgain)
-                .buttonStyle(.borderedProminent)
-                .tint(Color.brandPurple)
+            Button {
+                onChooseAnother()
+            } label: {
+                Text("Choose Another Book").frame(minWidth: 140)
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.large)
+            .keyboardShortcut(.defaultAction)
+            .padding(.top, 4)
 
             if let technicalDetails {
-                DisclosureGroup("Show Technical Details", isExpanded: $showDetails) {
-                    ScrollView {
-                        Text(technicalDetails)
-                            .font(.system(.caption, design: .monospaced))
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(8)
+                VStack(spacing: 8) {
+                    Button(showDetails ? "Hide Details" : "Show Details") {
+                        withAnimation(.easeInOut(duration: 0.2)) { showDetails.toggle() }
                     }
-                    .frame(maxHeight: 120)
-                    .background(RoundedRectangle(cornerRadius: 6).fill(Color(nsColor: .controlBackgroundColor)))
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.tint)
+                    .font(.callout)
+                    if showDetails {
+                        ScrollView {
+                            Text(technicalDetails)
+                                .font(.system(.caption, design: .monospaced))
+                                .textSelection(.enabled)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(10)
+                        }
+                        .frame(maxWidth: 420, maxHeight: 110)
+                        .background(
+                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                .fill(Color.primary.opacity(0.05)))
+                    }
                 }
-                .frame(maxWidth: 380)
             }
 
             Spacer()
         }
+        .padding(24)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color(nsColor: .windowBackgroundColor))
     }

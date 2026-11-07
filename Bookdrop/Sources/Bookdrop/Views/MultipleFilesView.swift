@@ -10,152 +10,151 @@ struct MultipleFilesView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            header
-            ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    statusHeadline
-
-                    VStack(spacing: 0) {
-                        ForEach(model.jobs) { job in
-                            row(for: job)
-                            if job.id != model.jobs.last?.id {
-                                Divider()
-                            }
-                        }
-                    }
-                    .background(RoundedRectangle(cornerRadius: 8).fill(Color(nsColor: .controlBackgroundColor)))
-
-                    if !model.isRunning && !model.isFinished {
-                        HStack {
-                            Text("Convert all to")
-                            Picker("", selection: $format) {
-                                ForEach(OutputFormat.allCases) { format in
-                                    Text(format.rawValue).tag(format)
-                                }
-                            }
-                            .labelsHidden()
-                            .frame(width: 120)
-                        }
-                        .font(.callout)
-
-                        HStack {
-                            Text("Save to")
-                            Spacer()
-                            Text(model.outputDirectory.path)
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
-                                .truncationMode(.head)
-                        }
-                        .font(.callout)
+            Form {
+                Section("\(model.jobs.count) Books") {
+                    ForEach(model.jobs) { job in
+                        JobRow(job: job)
                     }
                 }
-                .padding(20)
+                if !model.isRunning && !model.isFinished {
+                    Section("Output") {
+                        Picker("Format", selection: $format) {
+                            ForEach(OutputFormat.allCases) { format in
+                                Text(format.rawValue).tag(format)
+                            }
+                        }
+                        LabeledContent("Save to") {
+                            FolderButton(directory: $model.outputDirectory)
+                        }
+                    }
+                }
             }
+            .formStyle(.grouped)
+
             footer
         }
         .background(Color(nsColor: .windowBackgroundColor))
     }
 
-    private var header: some View {
-        HStack {
-            if !model.isRunning {
-                Button(action: onDone) { Image(systemName: "chevron.left") }
-                    .buttonStyle(.plain)
-            }
-            Spacer()
-            Text("Bookdrop")
-                .font(.headline)
-            Spacer()
-            if model.isRunning { Color.clear.frame(width: 16) }
+    private var failedCount: Int {
+        model.jobs.filter { if case .failed = $0.status { return true }; return false }.count
+    }
+
+    private var statusText: String {
+        if model.isFinished {
+            if model.isCancelled { return "Cancelled. \(model.completedCount) of \(model.jobs.count) converted." }
+            return failedCount == 0
+                ? "All \(model.completedCount) books converted."
+                : "\(model.completedCount) converted, \(failedCount) failed."
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
-        .background(.bar)
-    }
-
-    @ViewBuilder
-    private var statusHeadline: some View {
-        if model.isFinished && !model.isCancelled {
-            Label("\(model.completedCount) books converted", systemImage: "checkmark.circle.fill")
-                .font(.title3.weight(.semibold))
-                .foregroundStyle(.green)
-        } else if model.isRunning {
-            let index = min(model.completedCount + 1, model.jobs.count)
-            Text("Converting \(index) of \(model.jobs.count)")
-                .font(.title3.weight(.semibold))
-        } else {
-            Text("\(model.jobs.count) books ready to convert")
-                .font(.title3.weight(.semibold))
+        if model.isRunning {
+            let index = min(model.completedCount + failedCount + 1, model.jobs.count)
+            return "Converting \(index) of \(model.jobs.count)\u{2026}"
         }
+        return "Each book is saved with its title as the file name."
     }
 
-    private func row(for job: MultiConversionModel.Job) -> some View {
-        HStack {
-            Image(systemName: "book.closed.fill")
-                .foregroundStyle(Color.brandPurple)
-            Text(job.sourceURL.lastPathComponent)
-            Spacer()
-            statusView(for: job.status, sourceURL: job.sourceURL)
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-    }
-
-    @ViewBuilder
-    private func statusView(for status: FileJobStatus, sourceURL: URL) -> some View {
-        switch status {
-        case .waiting:
-            Text(fileSizeDisplay(for: sourceURL))
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        case .converting(let fraction, _):
-            ProgressView(value: fraction)
-                .frame(width: 100)
-        case .done:
-            Text("Done")
-                .font(.caption)
-                .foregroundStyle(.green)
-        case .failed(let message):
-            Text(message)
-                .font(.caption)
-                .foregroundStyle(.red)
-                .lineLimit(1)
-        }
-    }
-
-    private func fileSizeDisplay(for url: URL) -> String {
-        let attributes = try? FileManager.default.attributesOfItem(atPath: url.path)
-        let size = (attributes?[.size] as? Int64) ?? 0
-        return ByteCountFormatter.string(fromByteCount: size, countStyle: .file)
-    }
-
-    @ViewBuilder
     private var footer: some View {
-        HStack {
-            Spacer()
-            if model.isFinished {
-                if model.isCancelled {
-                    Button("Close", action: onDone)
-                        .buttonStyle(.bordered)
+        VStack(spacing: 0) {
+            Divider()
+            HStack(spacing: 12) {
+                Text(statusText)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                if model.isFinished {
+                    Button("Done", action: onDone)
+                    Button("Show in Finder") { NSWorkspace.shared.open(model.outputDirectory) }
+                        .buttonStyle(.borderedProminent)
+                        .keyboardShortcut(.defaultAction)
+                } else if model.isRunning {
+                    Button("Cancel All") { model.cancelAll() }
+                        .keyboardShortcut(.cancelAction)
                 } else {
-                    Button("Open Folder") {
-                        NSWorkspace.shared.open(model.outputDirectory)
+                    Button {
+                        model.start(options: options, format: format, conversions: conversions)
+                    } label: {
+                        Text("Convert All").frame(minWidth: 80)
                     }
                     .buttonStyle(.borderedProminent)
-                    .tint(Color.brandPurple)
+                    .keyboardShortcut(.defaultAction)
                 }
-            } else if model.isRunning {
-                Button("Cancel All") { model.cancelAll() }
-                    .buttonStyle(.bordered)
-            } else {
-                Button("Convert All") {
-                    model.start(options: options, format: format, conversions: conversions)
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(Color.brandPurple)
             }
+            .controlSize(.large)
+            .padding(.horizontal, 20)
+            .padding(.vertical, 14)
         }
-        .padding(16)
         .background(.bar)
+    }
+}
+
+/// One book in the batch: its file, and how far it is.
+private struct JobRow: View {
+    let job: MultiConversionModel.Job
+
+    var body: some View {
+        HStack(spacing: 10) {
+            Image(nsImage: NSWorkspace.shared.icon(forFile: job.sourceURL.path))
+                .resizable()
+                .frame(width: 24, height: 24)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(job.sourceURL.lastPathComponent)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                if case .failed(let message) = job.status {
+                    Text(message)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                        .help(message)
+                }
+            }
+            Spacer(minLength: 12)
+            status
+        }
+    }
+
+    @ViewBuilder
+    private var status: some View {
+        switch job.status {
+        case .waiting:
+            Text(fileSize)
+                .font(.callout)
+                .foregroundStyle(.secondary)
+                .monospacedDigit()
+        case .converting(let fraction, _):
+            HStack(spacing: 8) {
+                ProgressView(value: fraction)
+                    .frame(width: 90)
+                Text("\(Int(fraction * 100))%")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+                    .frame(width: 36, alignment: .trailing)
+            }
+        case .done(let url):
+            HStack(spacing: 6) {
+                Button {
+                    NSWorkspace.shared.activateFileViewerSelecting([url])
+                } label: {
+                    Image(systemName: "magnifyingglass")
+                }
+                .buttonStyle(.borderless)
+                .help("Show in Finder")
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundStyle(.green)
+                    .accessibilityLabel("Converted")
+            }
+        case .failed:
+            Image(systemName: "xmark.octagon.fill")
+                .foregroundStyle(.red)
+                .accessibilityLabel("Failed")
+        }
+    }
+
+    private var fileSize: String {
+        let attributes = try? FileManager.default.attributesOfItem(atPath: job.sourceURL.path)
+        let size = (attributes?[.size] as? Int64) ?? 0
+        return ByteCountFormatter.string(fromByteCount: size, countStyle: .file)
     }
 }

@@ -139,6 +139,21 @@ final class AppCoordinator: ObservableObject {
         a.resolvingSymlinksInPath().standardizedFileURL.path == b.resolvingSymlinksInPath().standardizedFileURL.path
     }
 
+    /// Shows the Open panel (the drop zone's button and File › Open…).
+    /// Does nothing while a book or a batch is converting.
+    func chooseFiles() {
+        switch screen {
+        case .converting, .loading:
+            return
+        case .multipleFiles(let model) where model.isRunning:
+            return
+        default:
+            break
+        }
+        let urls = OpenPanels.chooseBooks()
+        if !urls.isEmpty { handleFilesSelected(urls) }
+    }
+
     func cancelConversion(progress: ConversionProgress) {
         progress.cancel()
         conversionTask?.cancel()
@@ -167,12 +182,12 @@ final class AppCoordinator: ObservableObject {
         } catch let error as EngineError where error.isCancellation {
             screen = .loaded(book)
         } catch let error as LocalizedError {
-            // "Preserve EPUB Styling" only helps a source that has EPUB
+            // "Keep the book's styling" only helps a source that has EPUB
             // styling, so a PDF source gets the general hint.
             let sourceIsStyledEpubLike = book.sourceURL.pathExtension.lowercased() != "pdf"
             let generalHint =
                 outputFormat == .pdf && sourceIsStyledEpubLike
-                ? "Try enabling \u{201C}Preserve EPUB Styling\u{201D} or choose another output format."
+                ? "Try turning on \u{201C}Keep the book\u{2019}s styling\u{201D} under Typography and Layout, or choose another output format."
                 : "Try another output format."
             screen = .error(
                 message: error.errorDescription ?? "Couldn't convert this book.",

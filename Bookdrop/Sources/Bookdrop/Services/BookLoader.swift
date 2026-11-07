@@ -13,9 +13,7 @@ struct UnsupportedFormatError: LocalizedError, Equatable {
     }
 
     var recoverySuggestion: String? {
-        let names = EngineFormats.shared.inputExtensions.map { $0.uppercased() }
-        let list = names.count > 1 ? names.dropLast().joined(separator: ", ") + " and " + names.last! : names.joined()
-        return "Bookdrop opens \(list) files."
+        "Bookdrop opens \(BookLoader.supportedFormatsList(conjunction: "and")) files."
     }
 }
 
@@ -24,6 +22,13 @@ struct UnsupportedFormatError: LocalizedError, Equatable {
 /// converts it, so the app has one parser and one set of security checks.
 enum BookLoader {
     static let supportedExtensions = Set(EngineFormats.shared.inputExtensions)
+
+    /// "EPUB, KEPUB, … or PDF", from the engine's input formats.
+    static func supportedFormatsList(conjunction: String) -> String {
+        let names = EngineFormats.shared.inputExtensions.map { $0.uppercased() }
+        guard let last = names.last, names.count > 1 else { return names.joined() }
+        return names.dropLast().joined(separator: ", ") + " \(conjunction) " + last
+    }
 
     static func isSupported(_ url: URL) -> Bool {
         supportedExtensions.contains(url.pathExtension.lowercased())

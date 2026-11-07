@@ -1,112 +1,94 @@
 import SwiftUI
 import AppKit
 
-private enum SettingsTab: String, CaseIterable, Identifiable {
-    case general = "General"
-    case conversion = "Conversion"
-    case advanced = "Advanced"
-    case about = "About"
-    var id: String { rawValue }
-}
-
+/// The Settings window (Bookdrop › Settings…, ⌘,).
 struct SettingsView: View {
     @ObservedObject var settings: SettingsStore
-    var onClose: () -> Void
-
-    @State private var tab: SettingsTab = .general
 
     var body: some View {
-        HStack(spacing: 0) {
-            List(SettingsTab.allCases, selection: $tab) { t in
-                Text(t.rawValue).tag(t)
-            }
-            .listStyle(.sidebar)
-            .frame(width: 140)
-
-            Divider()
-
-            VStack(alignment: .leading, spacing: 0) {
-                ScrollView {
-                    content
-                        .padding(20)
-                }
-                Divider()
-                HStack {
-                    Spacer()
-                    Button("Done", action: onClose)
-                        .buttonStyle(.borderedProminent)
-                        .tint(Color.brandPurple)
-                }
-                .padding(12)
-            }
+        TabView {
+            GeneralSettings(settings: settings)
+                .tabItem { Label("General", systemImage: "gearshape") }
+            ConversionSettings(settings: settings)
+                .tabItem { Label("Conversion", systemImage: "arrow.triangle.2.circlepath") }
+            AdvancedSettings()
+                .tabItem { Label("Advanced", systemImage: "wrench.and.screwdriver") }
         }
-        .frame(width: 520, height: 380)
+        .frame(width: 480)
     }
+}
 
-    @ViewBuilder
-    private var content: some View {
-        switch tab {
-        case .general: generalSection
-        case .conversion: conversionSection
-        case .advanced: advancedSection
-        case .about: aboutSection
-        }
-    }
+private struct GeneralSettings: View {
+    @ObservedObject var settings: SettingsStore
 
-    private var generalSection: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            sectionTitle("General")
-
-            LabeledContent("Default output location") {
-                Picker("", selection: $settings.defaultOutputLocation) {
+    var body: some View {
+        Form {
+            Section {
+                Picker("Save converted books to", selection: $settings.defaultOutputLocation) {
                     ForEach(DefaultOutputLocation.allCases) { location in
                         Text(location.rawValue).tag(location)
                     }
                 }
-                .labelsHidden()
             }
-
-            VStack(alignment: .leading, spacing: 8) {
-                Text("After conversion").font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
-                Toggle("Open converted file", isOn: $settings.openConvertedFile)
-                Toggle("Show notification", isOn: $settings.showNotification)
-                Toggle("Reveal in Finder", isOn: $settings.revealInFinder)
+            Section("After Converting") {
+                Toggle("Open the converted file", isOn: $settings.openConvertedFile)
+                Toggle("Show a notification", isOn: $settings.showNotification)
+                Toggle("Show the file in Finder", isOn: $settings.revealInFinder)
             }
         }
+        .formStyle(.grouped)
+        .fixedSize(horizontal: false, vertical: true)
     }
+}
 
-    private var conversionSection: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            sectionTitle("Conversion")
-            Toggle("Remember last output format", isOn: $settings.rememberLastOutputFormat)
-            Toggle("Preserve original styling by default", isOn: $settings.preserveOriginalStylingByDefault)
-        }
-    }
+private struct ConversionSettings: View {
+    @ObservedObject var settings: SettingsStore
 
-    private var advancedSection: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            sectionTitle("Advanced")
-
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Temporary files").font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
-                // Keeps the files of the book that is open now.
-                Button("Clear Temporary Files") { TemporaryFiles.clearLeftovers() }
+    var body: some View {
+        Form {
+            Section {
+                Toggle(isOn: $settings.rememberLastOutputFormat) {
+                    Text("Remember the last output format")
+                    Text("When Bookdrop opens, it selects the format you used last.")
+                }
+                Toggle(isOn: $settings.preserveOriginalStylingByDefault) {
+                    Text("Keep the book's styling by default")
+                    Text("Sets the PDF option \u{201C}Keep the book\u{2019}s styling\u{201D} for each new book.")
+                }
             }
         }
+        .formStyle(.grouped)
+        .fixedSize(horizontal: false, vertical: true)
     }
+}
 
-    private var aboutSection: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            sectionTitle("About")
-            Text("Bookdrop")
-                .font(.title3.weight(.semibold))
-            Text("Convert books easily.")
-                .foregroundStyle(.secondary)
+private struct AdvancedSettings: View {
+    @State private var cleared = false
+
+    var body: some View {
+        Form {
+            Section {
+                LabeledContent {
+                    HStack(spacing: 8) {
+                        if cleared {
+                            Label("Cleared", systemImage: "checkmark")
+                                .labelStyle(.titleAndIcon)
+                                .foregroundStyle(.secondary)
+                                .transition(.opacity)
+                        }
+                        Button("Clear") {
+                            // Keeps the files of the book that is open now.
+                            TemporaryFiles.clearLeftovers()
+                            withAnimation { cleared = true }
+                        }
+                    }
+                } label: {
+                    Text("Temporary files")
+                    Text("Working copies that a crash or a forced quit left behind.")
+                }
+            }
         }
-    }
-
-    private func sectionTitle(_ text: String) -> some View {
-        Text(text)
-            .font(.headline)
+        .formStyle(.grouped)
+        .fixedSize(horizontal: false, vertical: true)
     }
 }

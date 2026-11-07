@@ -2,53 +2,54 @@ import SwiftUI
 import AppKit
 
 struct ConvertingView: View {
-    let bookTitle: String
+    let book: Book
+    let formatName: String
     @ObservedObject var progress: ConversionProgress
     var onCancel: () -> Void
 
     var body: some View {
-        VStack(spacing: 16) {
+        VStack(spacing: 18) {
             Spacer()
 
             ZStack {
                 Circle()
-                    .stroke(Color.brandPurple.opacity(0.15), lineWidth: 8)
+                    .stroke(Color.primary.opacity(0.08), lineWidth: 7)
                 Circle()
-                    .trim(from: 0, to: progress.fraction)
-                    .stroke(Color.brandPurple, style: StrokeStyle(lineWidth: 8, lineCap: .round))
+                    .trim(from: 0, to: max(progress.fraction, 0.005))
+                    .stroke(.tint, style: StrokeStyle(lineWidth: 7, lineCap: .round))
                     .rotationEffect(.degrees(-90))
-                Image(systemName: "book.closed.fill")
-                    .font(.system(size: 28))
-                    .foregroundStyle(Color.brandPurple)
+                Text("\(Int(progress.fraction * 100))%")
+                    .font(.system(size: 26, weight: .semibold, design: .rounded))
+                    .monospacedDigit()
             }
-            .frame(width: 96, height: 96)
-            .animation(.easeInOut, value: progress.fraction)
-
-            Text("Converting…")
-                .font(.title3.weight(.semibold))
-            Text(bookTitle)
-                .foregroundStyle(.secondary)
+            .frame(width: 120, height: 120)
+            .animation(.easeInOut(duration: 0.3), value: progress.fraction)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel("Conversion progress")
+            .accessibilityValue("\(Int(progress.fraction * 100)) percent")
 
             VStack(spacing: 6) {
-                ProgressView(value: progress.fraction)
-                    .frame(width: 280)
-                    .tint(Color.brandPurple)
-                Text("\(Int(progress.fraction * 100))%")
-                    .font(.caption)
+                Text("Converting to \(formatName)")
+                    .font(.title3.weight(.semibold))
+                Text(book.title)
                     .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .lineLimit(2)
+                    .frame(maxWidth: 420)
+                Text(progress.stageText.isEmpty ? " " : progress.stageText)
+                    .font(.callout)
+                    .foregroundStyle(.tertiary)
+                    .monospacedDigit()
             }
 
-            Text(progress.stageText)
-                .font(.callout)
-                .foregroundStyle(.secondary)
-
             Button("Cancel", action: onCancel)
-                .buttonStyle(.bordered)
-                .keyboardShortcut(.escape, modifiers: [])
-                .padding(.top, 8)
+                .controlSize(.large)
+                .keyboardShortcut(.cancelAction)
+                .padding(.top, 6)
 
             Spacer()
         }
+        .padding(24)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Color(nsColor: .windowBackgroundColor))
         .onChange(of: progress.fraction) { fraction in

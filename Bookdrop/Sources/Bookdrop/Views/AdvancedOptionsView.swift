@@ -1,62 +1,49 @@
 import SwiftUI
 
+/// The typography and layout options of PDF output, as form sections.
 struct AdvancedOptionsView: View {
     @Binding var options: PDFOptions
 
     private let fontChoices = ["Original", "Georgia", "Helvetica", "Times New Roman", "Avenir"]
+    private let lineSpacings: [Double] = [1.0, 1.2, 1.5, 2.0]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("Advanced PDF Options")
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(.secondary)
-
-            section("Typography") {
-                LabeledContent("Font") {
-                    Picker("", selection: $options.fontFamily) {
-                        ForEach(fontChoices, id: \.self) { Text($0).tag($0) }
-                    }
-                    .labelsHidden()
-                    .frame(width: 160)
-                }
-                LabeledContent("Font size") {
-                    Stepper(
-                        "\(Int(options.fontSizePt)) pt",
-                        value: $options.fontSizePt, in: 8...24, step: 1
-                    )
-                    .frame(width: 160)
-                }
-                LabeledContent("Line spacing") {
-                    Picker("", selection: $options.lineSpacing) {
-                        ForEach([1.0, 1.2, 1.5, 2.0], id: \.self) { Text(String(format: "%.1f", $0)).tag($0) }
-                    }
-                    .labelsHidden()
-                    .frame(width: 160)
+        Section("Typography") {
+            Picker("Font", selection: $options.fontFamily) {
+                ForEach(fontChoices, id: \.self) { name in
+                    Text(name == "Original" ? "Book's own font" : name).tag(name)
                 }
             }
-
-            section("Layout") {
-                Toggle("Preserve EPUB styling", isOn: $options.preserveEpubStyling)
-                Toggle("Remove publisher styling", isOn: $options.removePublisherStyling)
+            LabeledContent("Font size") {
+                HStack(spacing: 6) {
+                    Text("\(Int(options.fontSizePt)) pt")
+                        .monospacedDigit()
+                    Stepper("Font size", value: $options.fontSizePt, in: 8...24, step: 1)
+                        .labelsHidden()
+                }
             }
-
-            section("Pages") {
-                Toggle("Show page numbers", isOn: $options.showPageNumbers)
-                Toggle("Include headers", isOn: $options.includeHeaders)
-                Toggle("Include footers", isOn: $options.includeFooters)
+            Picker("Line spacing", selection: $options.lineSpacing) {
+                ForEach(lineSpacings, id: \.self) { spacing in
+                    Text(String(format: "%.1f", spacing)).tag(spacing)
+                }
             }
         }
-        .padding(16)
-        .background(RoundedRectangle(cornerRadius: 10).fill(Color(nsColor: .controlBackgroundColor)))
-    }
 
-    @ViewBuilder
-    private func section<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(title)
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
-            content()
+        Section("Styling") {
+            Toggle(isOn: $options.preserveEpubStyling) {
+                Text("Keep the book's styling")
+                Text("Use the colors, spacing and layout the book defines.")
+            }
+            Toggle(isOn: $options.removePublisherStyling) {
+                Text("Remove publisher styling")
+                Text("Remove all of the book's styles, even when its styling is kept.")
+            }
+        }
+
+        Section("Page Decorations") {
+            Toggle("Page numbers", isOn: $options.showPageNumbers)
+            Toggle("Book title at the top of each page", isOn: $options.includeHeaders)
+            Toggle("Book title at the bottom of each page", isOn: $options.includeFooters)
         }
     }
 }

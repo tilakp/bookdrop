@@ -96,6 +96,9 @@ swift test
 Chromium binary (or read through the real bundled PDF reader) rather than mocking it, so expect
 the suite to take about 30 seconds.
 
+To review the design, `BOOKDROP_SNAPSHOT_DIR=/tmp/shots swift test --filter ScreenSnapshots` renders
+every screen to PNG files in light and dark mode. Without the variable, that test is skipped.
+
 `swift run` launches the app as a bare executable: no Dock icon, no working system
 notifications (both need a real bundle identifier `swift run` can't provide). For the real
 thing, or to produce your own DMG:

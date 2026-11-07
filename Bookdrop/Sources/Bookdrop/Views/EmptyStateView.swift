@@ -5,129 +5,96 @@ import UniformTypeIdentifiers
 struct EmptyStateView: View {
     @ObservedObject var historyStore: HistoryStore
     let onFilesSelected: ([URL]) -> Void
-    let onSettings: () -> Void
+    let onChooseFiles: () -> Void
     let onConvertAgain: (HistoryEntry) -> Void
 
     @State private var isTargeted = false
-
-    private static let acceptedTypes: [UTType] =
-        BookLoader.supportedExtensions.sorted().compactMap { UTType(filenameExtension: $0) }
+    @State private var confirmClear = false
 
     var body: some View {
         VStack(spacing: 0) {
-            header
-            VStack(spacing: 24) {
-                Text("Convert your book")
-                    .font(.title2.weight(.semibold))
-                    .padding(.top, 24)
-
+            if historyStore.entries.isEmpty {
                 dropZone
-                    .padding(.horizontal, 40)
-                    .frame(maxHeight: .infinity)
-
-                if !historyStore.entries.isEmpty {
-                    recentConversions
-                        .padding(.horizontal, 40)
-                        .padding(.bottom, 24)
-                }
-            }
-        }
-        .background(Color(nsColor: .windowBackgroundColor))
-    }
-
-    private var header: some View {
-        HStack {
-            Text("Bookdrop")
-                .font(.headline)
-            Spacer()
-            Button(action: onSettings) {
-                Image(systemName: "gearshape")
-            }
-            .buttonStyle(.plain)
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
-        .background(.bar)
-    }
-
-    private var dropZone: some View {
-        VStack(spacing: 12) {
-            Image(systemName: "arrow.down.doc")
-                .font(.system(size: 32))
-                .foregroundStyle(Color.brandPurple)
-
-            Text(isTargeted ? "Drop to convert" : "Drop an ebook here")
-                .font(.body.weight(.medium))
-
-            HStack(spacing: 4) {
-                Text("or")
-                    .foregroundStyle(.secondary)
-                Button("Choose File…", action: presentOpenPanel)
-                    .buttonStyle(.plain)
-                    .foregroundStyle(Color.brandPurple)
-                    .keyboardShortcut("o", modifiers: .command)
-                    .onHover { inside in
-                        if inside { NSCursor.pointingHand.push() } else { NSCursor.pop() }
-                    }
+                    .padding(24)
+            } else {
+                dropZone
+                    .frame(height: 240)
+                    .padding([.horizontal, .top], 24)
+                    .padding(.bottom, 20)
+                recentConversions
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .padding(.vertical, 48)
+        .background(Color(nsColor: .windowBackgroundColor))
+        .confirmationDialog(
+            "Clear the list of recent conversions?", isPresented: $confirmClear,
+            actions: { Button("Clear List", role: .destructive) { historyStore.clear() } },
+            message: { Text("The converted files stay where they are.") })
+    }
+
+    private var dropZone: some View {
+        VStack(spacing: 14) {
+            Image(systemName: isTargeted ? "arrow.down.doc.fill" : "arrow.down.doc")
+                .font(.system(size: 42, weight: .light))
+                .foregroundStyle(.tint)
+                .frame(height: 50)
+
+            VStack(spacing: 4) {
+                Text(isTargeted ? "Release to open" : "Drop a book here")
+                    .font(.title3.weight(.semibold))
+                Text(BookLoader.supportedFormatsList(conjunction: "or"))
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+
+            Button("Choose Files\u{2026}", action: onChooseFiles)
+                .controlSize(.large)
+                .buttonStyle(.borderedProminent)
+                .padding(.top, 4)
+        }
+        .padding(24)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(isTargeted ? Color.brandPurple.opacity(0.08) : Color(nsColor: .controlBackgroundColor))
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(isTargeted ? Color.accentColor.opacity(0.08) : Color.primary.opacity(0.025))
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 12)
-                .strokeBorder(style: StrokeStyle(lineWidth: 1.5, dash: [6, 4]))
-                .foregroundStyle(isTargeted ? Color.brandPurple : Color.secondary.opacity(0.4))
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .strokeBorder(
+                    isTargeted ? AnyShapeStyle(.tint) : AnyShapeStyle(Color.secondary.opacity(0.35)),
+                    style: StrokeStyle(lineWidth: isTargeted ? 2 : 1.5, dash: isTargeted ? [] : [7, 5]))
         )
+        .animation(.easeOut(duration: 0.15), value: isTargeted)
         .onDrop(of: [.fileURL], isTargeted: $isTargeted, perform: handleDrop)
-        .accessibilityLabel("Ebook drop zone")
-        .accessibilityHint("Drag an EPUB or Kindle ebook file here, or use the Choose File button below")
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Drop zone")
+        .accessibilityHint("Drag a book here, or choose files")
     }
 
     private var recentConversions: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack {
-                Text("Recent conversions")
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("Recent Conversions")
+                    .font(.headline)
                 Spacer()
-                if !historyStore.entries.isEmpty {
-                    Button("Clear") { historyStore.clear() }
-                        .buttonStyle(.plain)
-                        .font(.caption)
-                        .foregroundStyle(Color.brandPurple)
-                }
+                Button("Clear\u{2026}") { confirmClear = true }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.tint)
+                    .font(.callout)
             }
+            .padding(.horizontal, 24)
 
-            ForEach(historyStore.entries) { entry in
-                HStack {
-                    Image(systemName: "book.closed.fill")
-                        .foregroundStyle(Color.brandPurple)
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(entry.title)
-                        Text(entry.conversionLabel)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+            ScrollView {
+                LazyVStack(spacing: 2) {
+                    ForEach(historyStore.entries) { entry in
+                        HistoryRow(
+                            entry: entry,
+                            onConvertAgain: { onConvertAgain(entry) },
+                            onRemove: { historyStore.remove(entry) })
                     }
-                    Spacer()
-                    Text(entry.date, style: .relative)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
                 }
-                .padding(.vertical, 4)
-                .contentShape(Rectangle())
-                .contextMenu {
-                    Button("Open") { NSWorkspace.shared.open(URL(fileURLWithPath: entry.outputPath)) }
-                    Button("Show in Finder") {
-                        NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: entry.outputPath)])
-                    }
-                    Button("Convert Again") { onConvertAgain(entry) }
-                    Divider()
-                    Button("Remove from History") { historyStore.remove(entry) }
-                }
+                .padding(.horizontal, 16)
+                .padding(.bottom, 16)
             }
         }
     }
@@ -155,14 +122,91 @@ struct EmptyStateView: View {
         }
         return true
     }
+}
 
-    private func presentOpenPanel() {
-        let panel = NSOpenPanel()
-        panel.allowedContentTypes = Self.acceptedTypes
-        panel.allowsMultipleSelection = true
-        panel.canChooseDirectories = false
-        if panel.runModal() == .OK, !panel.urls.isEmpty {
-            onFilesSelected(panel.urls)
+/// One past conversion. Double-click opens the file; Open and Show in
+/// Finder appear on hover; the context menu has every action.
+private struct HistoryRow: View {
+    let entry: HistoryEntry
+    let onConvertAgain: () -> Void
+    let onRemove: () -> Void
+
+    @State private var hovering = false
+
+    private var outputURL: URL { URL(fileURLWithPath: entry.outputPath) }
+    private var outputExists: Bool { FileManager.default.fileExists(atPath: entry.outputPath) }
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(nsImage: icon)
+                .resizable()
+                .frame(width: 32, height: 32)
+                .opacity(outputExists ? 1 : 0.4)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(entry.title)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .foregroundStyle(outputExists ? .primary : .secondary)
+                Text(subtitle)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+
+            Spacer(minLength: 8)
+
+            if hovering && outputExists {
+                HStack(spacing: 2) {
+                    rowButton("Open", systemImage: "arrow.up.forward.app") { NSWorkspace.shared.open(outputURL) }
+                    rowButton("Show in Finder", systemImage: "magnifyingglass") {
+                        NSWorkspace.shared.activateFileViewerSelecting([outputURL])
+                    }
+                }
+            }
         }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(hovering ? Color.primary.opacity(0.06) : .clear)
+        )
+        .contentShape(Rectangle())
+        .onHover { hovering = $0 }
+        .onTapGesture(count: 2) { if outputExists { NSWorkspace.shared.open(outputURL) } }
+        .contextMenu {
+            Button("Open") { NSWorkspace.shared.open(outputURL) }
+                .disabled(!outputExists)
+            Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([outputURL]) }
+                .disabled(!outputExists)
+            Button("Convert Again") { onConvertAgain() }
+                .disabled(!FileManager.default.fileExists(atPath: entry.sourcePath))
+            Divider()
+            Button("Remove from List", action: onRemove)
+        }
+        .help(entry.outputPath)
+    }
+
+    private var subtitle: String {
+        let when = entry.date.formatted(.relative(presentation: .named))
+        let status = outputExists ? when : "Moved or deleted"
+        return "\(entry.conversionLabel)  \u{00B7}  \(status)"
+    }
+
+    /// The file's own Finder icon, or the icon for its type if it is gone.
+    private var icon: NSImage {
+        if outputExists { return NSWorkspace.shared.icon(forFile: entry.outputPath) }
+        let type = UTType(filenameExtension: outputURL.pathExtension) ?? .data
+        return NSWorkspace.shared.icon(for: type)
+    }
+
+    private func rowButton(_ title: String, systemImage: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+                .frame(width: 24, height: 24)
+        }
+        .buttonStyle(.borderless)
+        .help(title)
+        .accessibilityLabel(title)
     }
 }

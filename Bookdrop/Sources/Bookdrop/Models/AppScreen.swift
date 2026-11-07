@@ -10,3 +10,10 @@ enum AppScreen {
     case error(message: String, hint: String?, technicalDetails: String?)
     case multipleFiles(MultiConversionModel)
 }
+
+/// The answer to "a file with this name already exists".
+enum DuplicateResolution {
+    case replace
+    case keepBoth
+    case cancel
+}
