@@ -1,8 +1,8 @@
 import CAnyform
 import Foundation
 
-/// Bridges the C callbacks (which can't capture Swift context — they're
-/// plain `@convention(c)` function pointers) to one in-flight conversion
+/// Bridges the C callbacks (plain `@convention(c)` function pointers, which
+/// cannot capture Swift context) to one in-flight conversion
 /// via an `Unmanaged` reference passed through as `ctx`. Not `@MainActor`
 /// itself since Rust invokes these callbacks from its own background
 /// thread; state that touches `ConversionProgress` hops to the main actor
@@ -31,16 +31,15 @@ private final class ConversionContext: @unchecked Sendable {
         lock.unlock()
         // Cancellation may have already been requested before the token
         // existed (the task can be cancelled the instant it's created,
-        // before `anyform_convert_book_start` returns) — apply it now instead
+        // before `anyform_convert_book_start` returns): apply it now instead
         // of silently dropping it.
         if cancelPending, let token {
             anyform_cancel(token)
         }
     }
 
-    /// Called from `withTaskCancellationHandler`'s `onCancel` — mirrors how
-    /// `AppCoordinator.cancelConversion` already cancels the wrapping
-    /// `Task` for the Swift-native converters.
+    /// Called from `withTaskCancellationHandler`'s `onCancel`, when the
+    /// task that runs the conversion is cancelled.
     func requestCancellation() {
         lock.lock()
         let token = self.token
@@ -92,31 +91,19 @@ private func rustCompleteCallback(
     _ success: Int32, _ errorJSON: UnsafePointer<CChar>?, _ ctx: UnsafeMutableRawPointer?
 ) {
     guard let ctx else { return }
-    // Balances the `passRetained` in `RustConversionEngine.convert` — this
+    // Balances the `passRetained` in `RustConversionEngine.convert`: this
     // callback fires exactly once per conversion, so this is where the
     // context's retain count comes back down.
     let context = Unmanaged<ConversionContext>.fromOpaque(ctx).takeRetainedValue()
     context.complete(success: success == 1, errorJSON: errorJSON.map { String(cString: $0) })
 }
 
-/// Builds the JSON `anyform_convert_book_start` reads its render options from —
-/// mirrors every field of `PDFOptions` (`Sources/Bookdrop/Models/PDFOptions.swift`)
-/// so nothing in the Advanced Options UI is silently ignored by the Rust
-/// engine for the `.pdf` path. `PDFOptions.pageDimensions`/`.margins.points`
-/// are already in points (72/inch, orientation pre-swapped for landscape)
-/// — converted to inches here since that's the unit Chrome's
-/// `Page.printToPDF` wants.
-///
-/// Reused unchanged for every other output format too (deliberate — see
-/// `RustConversionEngine`'s own doc comment for why a new/narrower options
-/// type wasn't introduced): each Rust output plugin reads only the
-/// `Options` keys it actually cares about via its own `opts.get_*` calls,
-/// each with its own Rust-side default, so page-size/margin/font/
-/// typography/header-footer keys are simply ignored by `TxtOutput`/
-/// `HtmlOutput`/`DocxOutput`/`EpubOutput`. Only `include_cover` matters to
-/// all of them; `generate_table_of_contents` additionally matters to
-/// `HtmlOutput` (`DocxOutput`/`EpubOutput` ignore it too — see their own
-/// doc comments for why neither has a TOC-toggle concept).
+/// The options JSON for `anyform_convert_book_start`: every field of
+/// `PDFOptions` plus the bundled tool paths. All formats get the same
+/// options. Each output plugin reads only the names it lists in
+/// `anyform_formats()`, and the engine refuses names that no plugin reads.
+/// `pageDimensions` and `margins.points` are in points (orientation
+/// already applied), and the engine wants inches.
 private func conversionOptionsJSON(pdfOptions: PDFOptions) -> String {
     let pointsPerInch = 72.0
     let dimensions = pdfOptions.pageDimensions

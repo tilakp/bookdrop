@@ -7,7 +7,7 @@ use anyform_doc::KindleInput;
 /// need `rust/scripts/fetch-boko.sh` to have run (same requirement shape
 /// as `pdf_tests.rs` and the vendored Chromium). `minimal.azw3` is
 /// `minimal.epub` converted by boko, so the two must parse to the same
-/// `DocumentIR` — that equivalence is the whole point of normalizing
+/// `DocumentIR`. That equivalence is the whole point of normalizing
 /// Kindle formats to EPUB rather than writing a separate parser.
 fn fixture(name: &str) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures").join(name)

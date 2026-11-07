@@ -16,6 +16,9 @@ pub enum ConvError {
     NoInputPlugin(String),
     #[error("no output plugin registered for extension \"{0}\"")]
     NoOutputPlugin(String),
+    /// An option no registered plugin reads: usually a misspelled key.
+    #[error("unknown option \"{0}\"")]
+    UnknownOption(String),
     #[error("this file isn't a valid archive")]
     InvalidArchive,
     #[error("missing required file: {0}")]
@@ -49,6 +52,7 @@ impl ConvError {
             ConvError::Io(_) => "io",
             ConvError::NoInputPlugin(_) => "unsupported_input",
             ConvError::NoOutputPlugin(_) => "unsupported_output",
+            ConvError::UnknownOption(_) => "unknown_option",
             ConvError::InvalidArchive => "invalid_archive",
             ConvError::MissingFile(_) => "missing_file",
             ConvError::Malformed(_) => "malformed",
@@ -71,7 +75,7 @@ impl ConvError {
 pub trait Log: Send + Sync {
     fn info(&self, msg: &str);
     /// Fractional progress (0.0..=1.0) plus a short human-readable stage
-    /// description. Default no-op — most hosts (the CLI, tests) don't need it.
+    /// description. Default: no-op. Most hosts (the CLI, tests) do not need it.
     fn progress(&self, _fraction: f64, _stage: &str) {}
     /// Plugins should poll this between chapters/pages and bail out with
     /// `ConvError::Cancelled` if true. Default: never cancelled.
@@ -114,6 +118,10 @@ impl Options {
         self.values.get(name)
     }
 
+    pub fn names(&self) -> impl Iterator<Item = &str> {
+        self.values.keys().map(String::as_str)
+    }
+
     pub fn get_str(&self, name: &str) -> Option<&str> {
         match self.get(name) {
             Some(Value::Str(s)) => Some(s.as_str()),
@@ -139,12 +147,18 @@ impl Options {
 pub trait InputPlugin<IR>: Send + Sync {
     fn name(&self) -> &'static str;
     fn extensions(&self) -> &'static [&'static str];
+    /// Every option name this plugin reads. The registry refuses options
+    /// that no plugin declares.
+    fn options(&self) -> &'static [&'static str];
     fn convert(&self, input: &Path, opts: &Options, log: &dyn Log) -> Result<IR, ConvError>;
 }
 
 pub trait OutputPlugin<IR>: Send + Sync {
     fn name(&self) -> &'static str;
     fn extension(&self) -> &'static str;
+    /// Every option name this plugin reads. The registry refuses options
+    /// that no plugin declares.
+    fn options(&self) -> &'static [&'static str];
     fn convert(&self, ir: &IR, output: &Path, opts: &Options, log: &dyn Log) -> Result<(), ConvError>;
 }
 
@@ -171,7 +185,36 @@ impl<IR> Registry<IR> {
         self.outputs.insert(plugin.extension(), plugin);
     }
 
+    /// The registered input plugins, each once, sorted by name.
+    pub fn input_plugins(&self) -> Vec<&Arc<dyn InputPlugin<IR>>> {
+        let mut plugins: Vec<_> = self.inputs.values().collect();
+        plugins.sort_by_key(|p| p.name());
+        plugins.dedup_by_key(|p| p.name());
+        plugins
+    }
+
+    /// The registered output plugins, sorted by name.
+    pub fn output_plugins(&self) -> Vec<&Arc<dyn OutputPlugin<IR>>> {
+        let mut plugins: Vec<_> = self.outputs.values().collect();
+        plugins.sort_by_key(|p| p.name());
+        plugins
+    }
+
+    /// A host sends one set of options to every call, so a name is valid
+    /// if any registered plugin reads it.
+    fn check_options(&self, opts: &Options) -> Result<(), ConvError> {
+        let known = |name: &str| {
+            self.inputs.values().any(|p| p.options().contains(&name))
+                || self.outputs.values().any(|p| p.options().contains(&name))
+        };
+        match opts.names().find(|name| !known(name)) {
+            Some(name) => Err(ConvError::UnknownOption(name.to_string())),
+            None => Ok(()),
+        }
+    }
+
     pub fn parse(&self, input: &Path, opts: &Options, log: &dyn Log) -> Result<IR, ConvError> {
+        self.check_options(opts)?;
         let ext = ext_of(input)?;
         let plugin = self
             .inputs
@@ -195,6 +238,7 @@ impl<IR> Registry<IR> {
     /// cancelled conversion never leaves a broken file, and never destroys
     /// the file it was to replace.
     pub fn write(&self, ir: &IR, output: &Path, opts: &Options, log: &dyn Log) -> Result<(), ConvError> {
+        self.check_options(opts)?;
         let (plugin, ext) = self.output_plugin(output)?;
         let parent = output.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or(Path::new("."));
         std::fs::create_dir_all(parent)?;

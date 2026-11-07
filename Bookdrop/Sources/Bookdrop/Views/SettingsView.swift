@@ -78,12 +78,7 @@ struct SettingsView: View {
     private var conversionSection: some View {
         VStack(alignment: .leading, spacing: 16) {
             sectionTitle("Conversion")
-            VStack(alignment: .leading, spacing: 2) {
-                Toggle("Remember last output format", isOn: $settings.rememberLastOutputFormat)
-                Text("No effect yet — PDF is the only output format in v1.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
+            Toggle("Remember last output format", isOn: $settings.rememberLastOutputFormat)
             Toggle("Preserve original styling by default", isOn: $settings.preserveOriginalStylingByDefault)
         }
     }

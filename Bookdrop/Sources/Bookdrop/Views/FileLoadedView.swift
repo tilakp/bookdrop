@@ -21,7 +21,7 @@ struct FileLoadedView: View {
                 VStack(alignment: .leading, spacing: 20) {
                     bookRow
                     outputSection
-                    if format.supportsCoverAndTOC {
+                    if format.supportsCover || format.supportsTableOfContents {
                         generalOptionsSection
                     }
                     if format.hasPdfOptions {
@@ -138,8 +138,12 @@ struct FileLoadedView: View {
             Text("Options")
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(.secondary)
-            Toggle("Include cover", isOn: $options.includeCover)
-            Toggle("Generate table of contents", isOn: $options.generateTableOfContents)
+            if format.supportsCover {
+                Toggle("Include cover", isOn: $options.includeCover)
+            }
+            if format.supportsTableOfContents {
+                Toggle("Generate table of contents", isOn: $options.generateTableOfContents)
+            }
         }
     }
 

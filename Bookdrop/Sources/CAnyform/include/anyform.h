@@ -15,10 +15,10 @@
 
 /**
  * A parsed book, opened once and reused by every conversion of it, so a
- * Kindle file runs boko once and a PDF is read by pdfium once. The mutex
- * serializes conversions of one book: `PdfOutput` edits chapter files in
- * place while it renders. The `Arc` keeps the book alive for a running
- * conversion even if the host frees its handle first.
+ * Kindle file runs boko once and a PDF is read by pdfium once. Output
+ * plugins only read the book, so conversions of one book can run at the
+ * same time. The `Arc` keeps the book alive for a running conversion even
+ * if the host frees its handle first.
  */
 typedef struct AnyformBook AnyformBook;
 
@@ -26,6 +26,15 @@ typedef struct AnyformBook AnyformBook;
  * Opaque cancellation handle for an in-flight `anyform_convert_book_start` call.
  */
 typedef struct AnyformCancelToken AnyformCancelToken;
+
+/**
+ * The formats the engine reads and writes, and the options each one
+ * reads: `{"inputs":[{"name","extensions","options"}],
+ * "outputs":[{"name","extension","options"}]}`. The host builds its list
+ * of openable files and its option controls from this. The caller frees
+ * the string with `anyform_free_string`.
+ */
+ char *anyform_formats(void);
 
 /**
  * Opens any registered input format (EPUB, Kindle, PDF). Returns

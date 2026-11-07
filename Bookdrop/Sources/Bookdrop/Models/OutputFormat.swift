@@ -19,15 +19,12 @@ enum OutputFormat: String, CaseIterable, Identifiable {
         }
     }
 
-    /// Whether the PDF-specific options section (page size/margins/orientation/
-    /// typography) applies to this format.
-    var hasPdfOptions: Bool { self == .pdf }
+    /// The engine options this format's output plugin reads. Each control
+    /// below shows only for a format that reads its option.
+    private var engineOptions: [String] { EngineFormats.shared.options(forOutputExtension: fileExtension) }
 
-    /// Whether "Include cover" / "Generate table of contents" apply. Not
-    /// plain text (never had either concept), and not EPUB — `EpubOutput`
-    /// (Rust) ignores both options entirely: EPUB3 requires a nav
-    /// document regardless of a "generate TOC" preference, and an EPUB
-    /// missing its own cover resource is strictly worse, not a legitimate
-    /// choice — see EpubOutput's own doc comment.
-    var supportsCoverAndTOC: Bool { self != .txt && self != .epub }
+    var supportsCover: Bool { engineOptions.contains("include_cover") }
+    var supportsTableOfContents: Bool { engineOptions.contains("generate_table_of_contents") }
+    /// Page size, margins, typography, headers and footers.
+    var hasPdfOptions: Bool { engineOptions.contains("page_width_in") }
 }

@@ -5,10 +5,10 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::OnceLock;
 
-use anyform_core::ConvError;
 use regex::Regex;
 
 use crate::ir::TocNode;
+use crate::markup::xml_escape;
 
 use super::RenderOptions;
 
@@ -32,38 +32,20 @@ fn style_strip_regexes() -> &'static StyleStripRegexes {
     })
 }
 
-/// Overwrites `original` in place with the typography overrides (and, if
-/// requested, without the book's own styling) and returns the original
-/// bytes, so the caller can restore them after rendering. Each worker
-/// thread has different spine items, so no two threads write one file.
-///
-/// The file is changed in place, not copied to a new name, because of
-/// footnote links. EPUB writes them as `<a href="thisfile.xhtml#note3">`
-/// even inside the same file, and Chrome makes a working `/Dest` only when
-/// that href resolves to the exact URL of the loaded page. With a renamed
-/// copy, every internal link became a dead `file://` URI. See
-/// `namespace_chapter_dests` and `fix_cross_chapter_links` for how the
-/// links survive the merge.
-pub(super) fn prepare_chapter_html(original: &Path, opts: &RenderOptions, toc_fragments: &[String]) -> Result<Vec<u8>, ConvError> {
-    let original_bytes = std::fs::read(original)
-        .map_err(|e| ConvError::Other(format!("failed to read {}: {e}", original.display())))?;
-    let needs_strip = !opts.preserve_epub_styling || opts.remove_publisher_styling;
-    let mut html = String::from_utf8_lossy(&original_bytes).into_owned();
-
-    if needs_strip {
+/// A chapter's markup as it is printed: with the typography overrides,
+/// without the book's own styling if requested, and with the hidden TOC
+/// anchor links. `BookTab::print` serves it at the chapter's own URL, so
+/// the file on disk stays unchanged.
+pub(super) fn prepare_chapter_html(mut html: String, opts: &RenderOptions, toc_fragments: &[String]) -> String {
+    if !opts.preserve_epub_styling || opts.remove_publisher_styling {
         let re = style_strip_regexes();
         html = re.style_tag.replace_all(&html, "").into_owned();
         html = re.link_tag.replace_all(&html, "").into_owned();
         html = re.style_attr_dq.replace_all(&html, "").into_owned();
         html = re.style_attr_sq.replace_all(&html, "").into_owned();
     }
-
-    let css = typography_css(opts);
-    html = inject_style(&html, &css);
-    html = inject_anchor_links(&html, toc_fragments);
-
-    std::fs::write(original, html)?;
-    Ok(original_bytes)
+    let html = inject_style(&html, &typography_css(opts));
+    inject_anchor_links(&html, toc_fragments)
 }
 
 fn typography_css(opts: &RenderOptions) -> String {
@@ -79,25 +61,17 @@ fn typography_css(opts: &RenderOptions) -> String {
     )
 }
 
-/// Chrome's print_to_pdf does not shrink oversized content to fit the page
-/// (no "shrink to fit" like some print dialogs offer) — anything wider than
-/// the printable area just gets clipped at the page edge. Some EPUBs supply
-/// their own `max-width: 100%` reset for images (calibre's own default
-/// stylesheet does), but not all do — a real scanned-page EPUB shipped
-/// images at native pixel width (1268px) under a class rule of `width:
-/// auto` with no upper bound, so a wide diagram got clipped down its right
-/// side in the rendered PDF. Applied unconditionally (not tied to any
-/// typography option) since this is a correctness fix, not a style choice:
-/// an image that already fits is unaffected by `max-width: 100%`.
+/// Chrome's print_to_pdf does not shrink content to fit the page: anything
+/// wider than the printable area is cut off at the page edge. Not every
+/// EPUB limits image width. A real scanned-page EPUB had 1268 px images
+/// under `width: auto`, and a wide diagram lost its right side. The rule
+/// applies always, not only with a typography option, because it fixes
+/// output and changes nothing for an image that fits.
 ///
-/// `pre`/`code` blocks hit the exact same "no shrink to fit" failure mode:
-/// a long unbroken line (a URL, a hex digest, an unwrapped code line)
-/// clips at the page edge instead of wrapping - confirmed with a synthetic
-/// fixture (`css-edge-cases.epub`) before adding this rule. CSS multi-
-/// column layouts (`column-count`) were audited the same way and turned
-/// out *not* to reproduce a clipping bug: Chrome sizes columns to fit
-/// their container rather than overflowing it, so no override is added for
-/// that case - there was no confirmed failure to fix.
+/// `pre` and `code` blocks have the same problem: a long unbroken line (a
+/// URL, a hex digest) is cut off instead of wrapped. `css-edge-cases.epub`
+/// shows it. CSS columns (`column-count`) do not have it, because Chrome
+/// sizes columns to their container, so they get no rule.
 const SHRINK_TO_FIT_CSS: &str = "img, svg { max-width: 100% !important; height: auto !important; } \
      table { max-width: 100% !important; } \
      pre, code { white-space: pre-wrap !important; overflow-wrap: break-word !important; \
@@ -144,7 +118,7 @@ fn inject_anchor_links(html: &str, fragments: &[String]) -> String {
     }
     let links: String = fragments
         .iter()
-        .map(|f| format!("<a href=\"#{}\" style=\"display:inline-block;width:1px;height:1px\"></a>", xml_escape_attr(f)))
+        .map(|f| format!("<a href=\"#{}\" style=\"display:inline-block;width:1px;height:1px\"></a>", xml_escape(f)))
         .collect();
     let block = format!("<div aria-hidden=\"true\" style=\"position:absolute;left:0;top:0;width:1px;height:1px;overflow:hidden\">{links}</div>");
     match html.rfind("</body>") {
@@ -153,12 +127,8 @@ fn inject_anchor_links(html: &str, fragments: &[String]) -> String {
     }
 }
 
-fn xml_escape_attr(s: &str) -> String {
-    s.replace('&', "&amp;").replace('"', "&quot;").replace('<', "&lt;")
-}
-
 /// True if `spine_path`'s markup references `cover_href`'s filename (e.g.
-/// via `<img src="../images/cover.jpg">`) — i.e. this spine page's whole
+/// via `<img src="../images/cover.jpg">`), that is, this spine page's whole
 /// job is displaying the cover image, so it shouldn't also be rendered as
 /// a regular chapter once a synthetic cover page has already been added.
 pub(super) fn spine_item_is_cover_page(spine_path: &Path, cover_href: &str) -> bool {

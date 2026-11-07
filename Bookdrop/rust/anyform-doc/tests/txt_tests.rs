@@ -77,3 +77,26 @@ fn real_book_converts_to_plausible_plain_text() {
     assert!(text.contains("Elizabeth"));
     assert!(!text.contains('<') && !text.contains('>'));
 }
+
+#[test]
+fn a_misspelled_option_is_refused_instead_of_ignored() {
+    let registry = anyform_doc::document_registry();
+    let mut opts = Options::new();
+    opts.set("include_covr", anyform_core::Value::Bool(false));
+    let output = std::env::temp_dir().join(format!("anyform-txt-test-unknown-option-{}.txt", std::process::id()));
+    let err = registry.convert(&fixtures_dir().join("minimal.epub"), &output, &opts, &StdLog).unwrap_err();
+    assert_eq!(err.code(), "unknown_option");
+    assert!(err.to_string().contains("include_covr"));
+    assert!(!output.exists());
+}
+
+#[test]
+fn every_plugin_declares_its_options_and_plugins_are_listed_once() {
+    let registry = anyform_doc::document_registry();
+    let inputs: Vec<_> = registry.input_plugins().iter().map(|p| p.name()).collect();
+    assert_eq!(inputs, ["epub", "kindle", "pdf"]);
+    let outputs: Vec<_> = registry.output_plugins().iter().map(|p| p.name()).collect();
+    assert_eq!(outputs, ["docx", "epub", "html", "pdf", "txt"]);
+    let html = registry.output_plugins().into_iter().find(|p| p.name() == "html").unwrap();
+    assert_eq!(html.options(), ["include_cover", "generate_table_of_contents"]);
+}

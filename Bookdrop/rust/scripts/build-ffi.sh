@@ -22,20 +22,16 @@ lipo -create \
 echo "build-ffi.sh: wrote $ROOT_DIR/target/universal/libanyform_ffi.a"
 
 # SwiftPM links this static lib via raw -L/-l unsafeFlags (see Package.swift),
-# not a tracked target dependency, so it has NO idea the .a file's *content*
-# changed when only its mtime/path stay the same — `swift build`/`swift test`
-# silently skip relinking and keep serving a stale binary that still has
-# whatever Rust bug you just "fixed" (this happened several times). Force
-# it: delete every previously-linked Bookdrop executable and test bundle
-# so the next `swift build`/`swift test`/
-# `Scripts/build-app.sh` is guaranteed to relink against what was just built.
+# not a tracked target dependency, so it does not see that the .a file's
+# content changed. `swift build` and `swift test` then skip relinking and
+# keep a stale binary with the old Rust code. So delete every linked
+# Bookdrop executable and test bundle, and the next build must relink.
 #
-# A universal (`swift build --arch arm64 --arch x86_64`, used by
-# `build-app.sh release`) writes to a different, capitalized layout —
+# A universal build (`swift build --arch arm64 --arch x86_64`, used by
+# `build-app.sh release`) uses a different, capitalized layout:
 # `.build/apple/Products/<Config>/Bookdrop` for the lipo'd product and
 # `.build/apple/Intermediates.noindex/.../Objects-normal/<arch>/Binary/Bookdrop`
-# per-arch — neither of which the original debug/release patterns below
-# match (case and shape both differ), so both are covered explicitly.
+# for each arch. The patterns below cover both layouts.
 BOOKDROP_ROOT="$(cd "$ROOT_DIR/.." && pwd)"
 find "$BOOKDROP_ROOT/.build" \( -path "*/debug/Bookdrop" -o -path "*/release/Bookdrop" \
      -o -path "*/Products/Release/Bookdrop" -o -path "*/Products/Debug/Bookdrop" \

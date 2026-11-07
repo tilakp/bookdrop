@@ -9,7 +9,7 @@
 use std::ffi::{c_char, c_void, CStr, CString};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use anyform_core::{Log, Options, Value};
 use anyform_doc::{DocumentIR, TocNode};
@@ -108,6 +108,51 @@ impl From<&DocumentIR> for BookInfo {
     }
 }
 
+// ---- Formats JSON (for `anyform_formats`) ----
+
+#[derive(Serialize)]
+struct InputFormatWire {
+    name: &'static str,
+    extensions: &'static [&'static str],
+    options: &'static [&'static str],
+}
+
+#[derive(Serialize)]
+struct OutputFormatWire {
+    name: &'static str,
+    extension: &'static str,
+    options: &'static [&'static str],
+}
+
+#[derive(Serialize)]
+struct FormatsWire {
+    inputs: Vec<InputFormatWire>,
+    outputs: Vec<OutputFormatWire>,
+}
+
+/// The formats the engine reads and writes, and the options each one
+/// reads: `{"inputs":[{"name","extensions","options"}],
+/// "outputs":[{"name","extension","options"}]}`. The host builds its list
+/// of openable files and its option controls from this. The caller frees
+/// the string with `anyform_free_string`.
+#[no_mangle]
+pub extern "C" fn anyform_formats() -> *mut c_char {
+    let registry = anyform_doc::document_registry();
+    let formats = FormatsWire {
+        inputs: registry
+            .input_plugins()
+            .iter()
+            .map(|p| InputFormatWire { name: p.name(), extensions: p.extensions(), options: p.options() })
+            .collect(),
+        outputs: registry
+            .output_plugins()
+            .iter()
+            .map(|p| OutputFormatWire { name: p.name(), extension: p.extension(), options: p.options() })
+            .collect(),
+    };
+    string_to_c(serde_json::to_string(&formats).unwrap_or_else(|_| "{}".into()))
+}
+
 /// An error as the host sees it: `code` is `ConvError::code()` (or
 /// "invalid_argument" / "internal" for failures in this layer), `message`
 /// is the text to show.
@@ -143,12 +188,12 @@ enum ErrorResult {
 }
 
 /// A parsed book, opened once and reused by every conversion of it, so a
-/// Kindle file runs boko once and a PDF is read by pdfium once. The mutex
-/// serializes conversions of one book: `PdfOutput` edits chapter files in
-/// place while it renders. The `Arc` keeps the book alive for a running
-/// conversion even if the host frees its handle first.
+/// Kindle file runs boko once and a PDF is read by pdfium once. Output
+/// plugins only read the book, so conversions of one book can run at the
+/// same time. The `Arc` keeps the book alive for a running conversion even
+/// if the host frees its handle first.
 pub struct AnyformBook {
-    ir: Arc<Mutex<DocumentIR>>,
+    ir: Arc<DocumentIR>,
 }
 
 /// Opens any registered input format (EPUB, Kindle, PDF). Returns
@@ -179,7 +224,7 @@ pub unsafe extern "C" fn anyform_open_book(
     let (payload, book) = match result {
         Ok(ir) => {
             let payload = serde_json::to_string(&ParseResult::Ok { book: BookInfo::from(&ir) });
-            (payload, Box::into_raw(Box::new(AnyformBook { ir: Arc::new(Mutex::new(ir)) })))
+            (payload, Box::into_raw(Box::new(AnyformBook { ir: Arc::new(ir) })))
         }
         Err(error) => (serde_json::to_string(&ParseResult::Error(error)), std::ptr::null_mut()),
     };
@@ -224,7 +269,7 @@ pub unsafe extern "C" fn anyform_convert_book_start(
     let cancelled = Arc::new(AtomicBool::new(false));
     let token = Box::into_raw(Box::new(AnyformCancelToken { cancelled: cancelled.clone() }));
 
-    let setup: Result<(Arc<Mutex<DocumentIR>>, PathBuf, Options), String> = (|| {
+    let setup: Result<(Arc<DocumentIR>, PathBuf, Options), String> = (|| {
         let ir = book.as_ref().map(|b| b.ir.clone()).ok_or("null book")?;
         let output = c_str_to_pathbuf(output_path)?;
         let opts = options_from_json(options_json)?;
@@ -244,12 +289,7 @@ pub unsafe extern "C" fn anyform_convert_book_start(
 
     std::thread::spawn(move || {
         let log = FfiLog { cancelled, on_progress, progress_ctx: progress_ctx_addr };
-        let result = catch_panic(|| {
-            // A poisoned lock means an earlier conversion panicked. The IR
-            // itself is still usable: each conversion reads it afresh.
-            let ir = ir.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-            Ok(anyform_doc::document_registry().write(&ir, &output, &opts, &log)?)
-        });
+        let result = catch_panic(|| Ok(anyform_doc::document_registry().write(&ir, &output, &opts, &log)?));
 
         // `on_complete` must fire exactly once whatever happened above: the
         // Swift side waits on it, and a missed call would hang the UI.
@@ -399,6 +439,19 @@ mod tests {
     }
 
     #[test]
+    fn formats_list_every_plugin_with_its_options() {
+        let raw = anyform_formats();
+        let json: serde_json::Value = serde_json::from_str(unsafe { CStr::from_ptr(raw) }.to_str().unwrap()).unwrap();
+        unsafe { anyform_free_string(raw) };
+        let kindle = json["inputs"].as_array().unwrap().iter().find(|f| f["name"] == "kindle").unwrap();
+        assert!(kindle["extensions"].as_array().unwrap().contains(&"azw3".into()));
+        assert_eq!(kindle["options"], serde_json::json!(["boko_path"]));
+        let docx = json["outputs"].as_array().unwrap().iter().find(|f| f["name"] == "docx").unwrap();
+        assert_eq!(docx["extension"], "docx");
+        assert_eq!(docx["options"], serde_json::json!(["include_cover"]));
+    }
+
+    #[test]
     fn parse_success_returns_the_book() {
         let book = parse(concat!(env!("CARGO_MANIFEST_DIR"), "/../anyform-doc/tests/fixtures/minimal.epub"));
         assert_eq!(book["status"], "ok");
@@ -430,6 +483,33 @@ mod tests {
             assert_eq!(rx.recv().unwrap(), 1, "conversion to {ext} should succeed");
             unsafe { anyform_free_cancel_token(token) };
             assert!(dir.join(format!("out.{ext}")).exists());
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn two_pdf_conversions_of_one_book_run_at_the_same_time() {
+        let (_, book) = open(concat!(env!("CARGO_MANIFEST_DIR"), "/../anyform-doc/tests/fixtures/minimal.epub"));
+        let (tx, rx) = std::sync::mpsc::channel::<i32>();
+        let ctx = &tx as *const _ as *mut c_void;
+        let dir = std::env::temp_dir().join(format!("anyform-ffi-parallel-{}", std::process::id()));
+        let outputs: Vec<CString> = (0..2).map(|i| CString::new(dir.join(format!("out{i}.pdf")).to_str().unwrap()).unwrap()).collect();
+        let tokens: Vec<_> = outputs
+            .iter()
+            .map(|out| unsafe {
+                anyform_convert_book_start(book, out.as_ptr(), std::ptr::null(), None, std::ptr::null_mut(), Some(record_completion), ctx)
+            })
+            .collect();
+        for _ in &tokens {
+            assert_eq!(rx.recv().unwrap(), 1, "each conversion should succeed");
+        }
+        for token in tokens {
+            unsafe { anyform_free_cancel_token(token) };
+        }
+        unsafe { anyform_free_book(book) };
+        for i in 0..2 {
+            let doc = lopdf::Document::load(dir.join(format!("out{i}.pdf"))).expect("a valid PDF");
+            assert!(!doc.get_pages().is_empty());
         }
         let _ = std::fs::remove_dir_all(&dir);
     }

@@ -19,6 +19,10 @@ impl OutputPlugin<DocumentIR> for TxtOutput {
         "txt"
     }
 
+    fn options(&self) -> &'static [&'static str] {
+        &[]
+    }
+
     fn convert(&self, ir: &DocumentIR, output: &Path, _opts: &Options, log: &dyn Log) -> Result<(), ConvError> {
         if ir.spine.is_empty() {
             return Err(ConvError::NoChapters);
@@ -32,9 +36,7 @@ impl OutputPlugin<DocumentIR> for TxtOutput {
             }
             log.progress(i as f64 / total as f64, &format!("Extracting chapter {} of {}", i + 1, total));
 
-            let path = ir.content_dir.join(&item.href);
-            let raw = std::fs::read_to_string(&path).map_err(|_| ConvError::MissingFile(item.href.clone()))?;
-            let text = htmltext::extract_text(&raw);
+            let text = htmltext::extract_text(&ir.read_chapter(item)?);
             let trimmed = text.trim();
             if !trimmed.is_empty() {
                 chapters.push(trimmed.to_string());
@@ -50,9 +52,6 @@ impl OutputPlugin<DocumentIR> for TxtOutput {
         body.push_str(&chapters.join("\n\n\n"));
         body.push('\n');
 
-        if let Some(parent) = output.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
         std::fs::write(output, body)?;
         log.progress(1.0, "Done");
         Ok(())

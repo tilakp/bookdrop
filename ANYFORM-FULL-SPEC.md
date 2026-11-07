@@ -97,8 +97,8 @@ limitations of EPUB-out (non-linear spine items; source `dc:identifier`).
   which does it automatically).
 - Build the Rust engine: `cd Bookdrop/rust && cargo test` (needs
   `scripts/fetch-chromium.sh`/`scripts/fetch-pdfium.sh` run once first for
-  the PDF-output/PDF-input tests) — 99 tests.
-- Test: `swift test` — 44 tests (~26s, mostly real Rust/Chromium PDF
+  the PDF-output/PDF-input tests): 124 tests.
+- Test: `swift test`: 52 tests (~40s, mostly real Rust/Chromium PDF
   renders now, not mocked), all use scratch directories / an in-memory
   `KeyValueStore` so they never touch real user data.
 - Run as a real `.app` bundle — needed for the Dock icon, system
@@ -108,31 +108,37 @@ limitations of EPUB-out (non-linear spine items; source `dc:identifier`).
   `sips`/`iconutil` only if the design changes — see §7).
 
 **Architecture at a glance:**
-- `Sources/Bookdrop/Services/AppCoordinator.swift` — the screen state
-  machine + conversion flow, unit-testable independent of SwiftUI.
-- `Sources/Bookdrop/Services/RustConversionEngine.swift` — the sole
-  conversion path for every `OutputFormat` case now; `AppCoordinator`/
-  `MultiConversionModel` call it unconditionally, dispatch on the output
-  path's extension happens inside the Rust registry (§2), not in Swift.
-- `Bookdrop/rust/anyform-doc/src/{pdf,epub_output,txt,html,docx}.rs` — the
-  five output plugins backing that (PDF via bundled headless Chromium;
-  EPUB/TXT/HTML/DOCX pure Rust, TXT and DOCX sharing `htmltext.rs`'s
-  chapter-XHTML extractor).
-- `Bookdrop/rust/anyform-doc/src/{epub,kindle,pdf_input}.rs` — the three
-  input plugins (EPUB parsed directly; Kindle-family normalized to EPUB via
-  the bundled `boko` binary then delegated to `EpubInput`; PDF read via
-  bundled `pdfium` and reconstructed into chapters by `pdf_layout.rs`'s
-  layout heuristics — a deliberately-scoped MVP, see §6's "Version 2.2").
-- `Sources/Bookdrop/Services/EpubParser.swift` + `EpubXML.swift` — EPUB →
-  `Book` (OPF/NCX/nav parsing, cover extraction). Kept deliberately even
-  though byte-level conversion moved entirely to Rust: this is what parses
-  the `Book` the UI displays (title/author/cover/chapter count) for EPUB
-  and (via `KindleNormalizer.swift`) normalized Kindle-family files; PDF's
-  preview instead calls the Rust engine directly through the FFI
-  (`anyform_parse_book`) since there's no Swift-native PDF parser.
+- `Sources/Bookdrop/Services/AppCoordinator.swift`: the screen state
+  machine and single-book flow, testable without SwiftUI.
+- `Sources/Bookdrop/Services/ConversionService.swift`: converts one book,
+  records the history entry, and applies the "After conversion" settings
+  (notification, Finder, open file). The single-book flow and the batch
+  (`MultiConversionModel`) both use it. A batch gets one notification and
+  one Finder window, and does not open each file.
+- `Sources/Bookdrop/Services/RustConversionEngine.swift` and
+  `BookLoader.swift`: the FFI bridge. Every format is read and written by
+  the Rust engine. The output plugin is picked by the output path's
+  extension in the Rust registry (§2), not in Swift.
+- `Sources/Bookdrop/Services/EngineFormats.swift`: the engine's input and
+  output formats and the options each one reads, from `anyform_formats()`.
+  The openable file types, the unsupported-file hint and the option
+  controls for each output format come from it.
+- `Bookdrop/rust/anyform-doc/src/`: the plugins. Input: `epub.rs`,
+  `kindle.rs` (normalized to EPUB by the bundled `boko`), `pdf_input.rs`
+  (bundled pdfium, chapters rebuilt by the `pdf_layout/` heuristics).
+  Output: `pdf/` (bundled headless Chromium), `epub_output.rs`, `txt.rs`,
+  `html.rs`, `docx.rs`. `options.rs` names every option. Each plugin lists
+  the options it reads, and the registry refuses all others. `tools.rs`
+  finds the bundled programs. `DocumentIR::read_chapter` is the one way
+  output plugins read chapter markup.
+- Output plugins only read the IR. PDF output serves each prepared
+  chapter to Chrome from memory at the chapter's own `file://` URL
+  (request interception), so footnote links still resolve and the book's
+  files never change. One opened book can be converted more than once at
+  the same time.
 - `PDFOptions` (`Models/PDFOptions.swift`) carries options reused by every
-  format, not just PDF (cover/TOC/style-preservation) — the name is known
-  naming debt, not urgent enough to have risked the rename yet.
+  format, not just PDF (cover/TOC/style-preservation). The name is known
+  naming debt.
 
 ---
 

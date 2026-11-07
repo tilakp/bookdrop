@@ -7,6 +7,36 @@ final class MultiConversionModelTests: XCTestCase {
         Bundle.module.url(forResource: "minimal", withExtension: "epub", subdirectory: "Fixtures")!
     }
 
+    private func makeConversions(
+        _ history: HistoryStore, settings: SettingsStore? = nil, sideEffects: ConversionSideEffects? = nil
+    ) -> ConversionService {
+        ConversionService(
+            historyStore: history, settingsStore: settings ?? SettingsStore(defaults: InMemoryKeyValueStore()),
+            sideEffects: sideEffects ?? RecordingSideEffects())
+    }
+
+    func testABatchNotifiesOnceAndRevealsEveryFileButOpensNone() async throws {
+        let outputDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("MultiConversionModelTests-\(UUID().uuidString)")
+        let history = HistoryStore(directory: outputDir.appendingPathComponent("history"))
+        let settings = SettingsStore(defaults: InMemoryKeyValueStore())
+        settings.showNotification = true
+        settings.revealInFinder = true
+        settings.openConvertedFile = true
+        let sideEffects = RecordingSideEffects()
+        let model = MultiConversionModel(urls: [fixtureURL(), fixtureURL()], outputDirectory: outputDir)
+
+        await model.run(
+            options: PDFOptions(), format: .txt,
+            conversions: makeConversions(history, settings: settings, sideEffects: sideEffects))
+
+        XCTAssertEqual(sideEffects.notifications.count, 1, "one notification for the whole batch")
+        XCTAssertEqual(sideEffects.notifications.first?.bookTitles.count, 2)
+        XCTAssertEqual(sideEffects.revealed.count, 1)
+        XCTAssertEqual(sideEffects.revealed.first?.count, 2, "one Finder window that selects both files")
+        XCTAssertTrue(sideEffects.opened.isEmpty, "a batch must not open every file")
+    }
+
     func testConvertsMultipleFilesAndRecordsHistory() async throws {
         let outputDir = FileManager.default.temporaryDirectory
             .appendingPathComponent("MultiConversionModelTests-\(UUID().uuidString)")
@@ -14,11 +44,11 @@ final class MultiConversionModelTests: XCTestCase {
             .appendingPathComponent("MultiConversionModelTests-history-\(UUID().uuidString)")
         let history = HistoryStore(directory: historyDir)
 
-        // Two distinct source URLs pointing at the same fixture — exercises the
+        // Two source URLs that point at the same fixture. This exercises the
         // "Keep Both"-style auto-numbering since both books share a title.
         let model = MultiConversionModel(urls: [fixtureURL(), fixtureURL()], outputDirectory: outputDir)
 
-        await model.run(options: PDFOptions(), format: .pdf, historyStore: history)
+        await model.run(options: PDFOptions(), format: .pdf, conversions: makeConversions(history))
 
         XCTAssertEqual(model.completedCount, 2)
         XCTAssertTrue(model.isFinished)
@@ -41,7 +71,7 @@ final class MultiConversionModelTests: XCTestCase {
 
         let model = MultiConversionModel(urls: [fixtureURL()], outputDirectory: outputDir)
         model.cancelAll()
-        await model.run(options: PDFOptions(), format: .pdf, historyStore: history)
+        await model.run(options: PDFOptions(), format: .pdf, conversions: makeConversions(history))
 
         guard case .failed = model.jobs[0].status else {
             XCTFail("expected cancelled job to be marked failed, got \(model.jobs[0].status)")
@@ -57,7 +87,7 @@ final class MultiConversionModelTests: XCTestCase {
         let history = HistoryStore(directory: historyDir)
 
         let model = MultiConversionModel(urls: [fixtureURL(), fixtureURL()], outputDirectory: outputDir)
-        await model.run(options: PDFOptions(), format: .html, historyStore: history)
+        await model.run(options: PDFOptions(), format: .html, conversions: makeConversions(history))
 
         XCTAssertEqual(model.completedCount, 2)
         for job in model.jobs {
@@ -79,7 +109,7 @@ final class MultiConversionModelTests: XCTestCase {
         let history = HistoryStore(directory: historyDir)
 
         let model = MultiConversionModel(urls: [fixtureURL()], outputDirectory: outputDir)
-        await model.run(options: PDFOptions(), format: .txt, historyStore: history)
+        await model.run(options: PDFOptions(), format: .txt, conversions: makeConversions(history))
 
         XCTAssertEqual(model.completedCount, 1)
         guard case .done(let url) = model.jobs[0].status else {
@@ -100,7 +130,7 @@ final class MultiConversionModelTests: XCTestCase {
         let history = HistoryStore(directory: historyDir)
 
         let model = MultiConversionModel(urls: [fixtureURL()], outputDirectory: outputDir)
-        await model.run(options: PDFOptions(), format: .docx, historyStore: history)
+        await model.run(options: PDFOptions(), format: .docx, conversions: makeConversions(history))
 
         XCTAssertEqual(model.completedCount, 1)
         guard case .done(let url) = model.jobs[0].status else {
@@ -110,7 +140,7 @@ final class MultiConversionModelTests: XCTestCase {
         XCTAssertEqual(url.pathExtension, "docx")
         let data = try Data(contentsOf: url)
         XCTAssertGreaterThan(data.count, 0)
-        // "PK" zip-magic-bytes — a .docx is a zip container; a genuinely
+        // "PK" zip magic bytes: a .docx is a zip container, and a genuinely
         // empty or corrupted output wouldn't even have this much.
         XCTAssertEqual(data.prefix(2), Data([0x50, 0x4B]))
     }
@@ -123,7 +153,7 @@ final class MultiConversionModelTests: XCTestCase {
         let history = HistoryStore(directory: historyDir)
 
         let model = MultiConversionModel(urls: [fixtureURL()], outputDirectory: outputDir)
-        await model.run(options: PDFOptions(), format: .epub, historyStore: history)
+        await model.run(options: PDFOptions(), format: .epub, conversions: makeConversions(history))
 
         XCTAssertEqual(model.completedCount, 1)
         guard case .done(let url) = model.jobs[0].status else {
@@ -131,7 +161,7 @@ final class MultiConversionModelTests: XCTestCase {
             return
         }
         XCTAssertEqual(url.pathExtension, "epub")
-        // The regenerated EPUB should itself be re-parseable — the same
+        // The regenerated EPUB should itself be re-parseable, by the same
         // round-trip property anyform-doc's own epub_output_tests.rs
         // verifies at the Rust level, checked here end to end through the
         // real Swift/FFI boundary too.
@@ -152,7 +182,7 @@ final class MultiConversionModelTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: broken) }
 
         let model = MultiConversionModel(urls: [broken, fixtureURL()], outputDirectory: outputDir)
-        await model.run(options: PDFOptions(), format: .txt, historyStore: history)
+        await model.run(options: PDFOptions(), format: .txt, conversions: makeConversions(history))
         try await Task.sleep(nanoseconds: 400_000_000)
 
         guard case .failed = model.jobs[0].status else {
@@ -168,7 +198,7 @@ final class MultiConversionModelTests: XCTestCase {
         let history = HistoryStore(directory: outputDir.appendingPathComponent("history"))
         let model = MultiConversionModel(urls: [fixtureURL(), fixtureURL()], outputDirectory: outputDir)
 
-        let task = model.start(options: PDFOptions(), format: .pdf, historyStore: history)
+        let task = model.start(options: PDFOptions(), format: .pdf, conversions: makeConversions(history))
         while case .waiting = model.jobs[0].status { await Task.yield() }
         model.cancelAll()
         await task.value

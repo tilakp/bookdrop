@@ -17,8 +17,8 @@ struct OpfDocument {
     spine_idrefs: Vec<String>,
     toc_ncx_id: Option<String>,
     cover_meta_content_id: Option<String>,
-    /// The package element's `unique-identifier` attribute — an id
-    /// reference into `identifiers` — plus every `<dc:identifier>`
+    /// The package element's `unique-identifier` attribute (an id
+    /// reference into `identifiers`), plus every `<dc:identifier>`
     /// element's own id, `opf:scheme` attribute, and text. Needed only for
     /// deriving the two EPUB font-obfuscation keys (see
     /// `font_deobfuscation_keys`); everything else in this parser ignores
@@ -58,6 +58,10 @@ impl InputPlugin<DocumentIR> for EpubInput {
 
     fn extensions(&self) -> &'static [&'static str] {
         &["epub", "kepub"]
+    }
+
+    fn options(&self) -> &'static [&'static str] {
+        &[]
     }
 
     fn convert(&self, input: &Path, _opts: &Options, _log: &dyn Log) -> Result<DocumentIR, ConvError> {
@@ -453,7 +457,7 @@ fn canonical_toc_href(base_dir: &str, raw: Option<&str>) -> Option<String> {
     })
 }
 
-/// EPUB3 `<nav epub:type="toc">` — the `<ol><li><a>` tree it contains.
+/// EPUB3 `<nav epub:type="toc">`: the `<ol><li><a>` tree it contains.
 fn parse_nav_toc(path: &Path, base_dir: &str) -> Option<Vec<TocNode>> {
     let xml = std::fs::read_to_string(path).ok()?;
     let doc = parse_xml(&xml).ok()?;
@@ -489,7 +493,7 @@ fn parse_ol(ol: roxmltree::Node, base_dir: &str) -> Vec<TocNode> {
         .collect()
 }
 
-/// EPUB2 `toc.ncx` — the `<navMap>` document.
+/// EPUB2 `toc.ncx`: the `<navMap>` document.
 fn parse_ncx_toc(path: &Path, base_dir: &str) -> Option<Vec<TocNode>> {
     let xml = std::fs::read_to_string(path).ok()?;
     let doc = parse_xml(&xml).ok()?;

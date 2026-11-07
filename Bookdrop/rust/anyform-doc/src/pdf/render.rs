@@ -2,9 +2,9 @@
 //! tabs, and prints each chapter (and the cover) to its own PDF.
 
 use std::collections::{BTreeMap, HashMap};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use anyform_core::{ConvError, Log};
 use headless_chrome::browser::tab::RequestPausedDecision;
@@ -14,10 +14,11 @@ use headless_chrome::{Browser, LaunchOptions, Tab};
 use lopdf::{Dictionary, Object};
 
 use crate::href;
-use crate::ir::SpineItem;
+use crate::ir::DocumentIR;
 
 use super::chapter_html::prepare_chapter_html;
-use super::{RenderOptions, sniff_image_mime};
+use super::RenderOptions;
+use crate::markup::{data_uri, sniff_image_mime};
 
 /// Renders `indices` (spine positions) in parallel on a small pool of
 /// Chrome tabs in one browser, sized to the CPU count (at most 8), as
@@ -29,8 +30,7 @@ use super::{RenderOptions, sniff_image_mime};
 #[allow(clippy::too_many_arguments)]
 pub(super) fn render_chapters_parallel(
     browser: &Browser,
-    content_dir: &Path,
-    spine: &[SpineItem],
+    ir: &DocumentIR,
     indices: &[usize],
     render_opts: &RenderOptions,
     toc_fragments: &HashMap<String, Vec<String>>,
@@ -52,7 +52,7 @@ pub(super) fn render_chapters_parallel(
             .chunks(chunk_size)
             .map(|chunk| {
                 scope.spawn(move || -> ChunkResult {
-                    let tab = open_locked_down_tab(browser, content_dir)?;
+                    let tab = open_locked_down_tab(browser, &ir.content_dir)?;
                     let mut out = Vec::with_capacity(chunk.len());
                     for &i in chunk {
                         // Each worker polls the same shared cancellation flag
@@ -63,13 +63,11 @@ pub(super) fn render_chapters_parallel(
                         if log.is_cancelled() {
                             return Err(ConvError::Cancelled);
                         }
-                        let item = &spine[i];
-                        let original_path = content_dir.join(&item.href);
+                        let item = &ir.spine[i];
                         let fragments = toc_fragments.get(&item.href).map(Vec::as_slice).unwrap_or_default();
-                        let original_bytes = prepare_chapter_html(&original_path, render_opts, fragments)?;
-                        let doc = render_one_chapter(&tab, &original_path, &item.href, render_opts);
-                        let _ = std::fs::write(&original_path, &original_bytes);
-                        let mut doc = doc?;
+                        let html = prepare_chapter_html(ir.read_chapter(item)?, render_opts, fragments);
+                        let path = ir.content_dir.join(&item.href);
+                        let mut doc = tab.print(&path, &html, chapter_print_options(render_opts), &item.href)?;
                         namespace_chapter_dests(&mut doc, &format!("c{i}"));
 
                         let done = done_count.fetch_add(1, Ordering::SeqCst) + 1;
@@ -106,17 +104,68 @@ pub(super) fn render_chapters_parallel(
     Ok(ordered.into_values().collect())
 }
 
-fn render_one_chapter(tab: &Tab, render_path: &Path, href: &str, opts: &RenderOptions) -> Result<lopdf::Document, ConvError> {
-    let url = format!("file://{}", render_path.display());
-    tab.navigate_to(&url)
-        .map_err(|e| ConvError::Other(format!("failed to load {href}: {e}")))?;
-    tab.wait_until_navigated()
-        .map_err(|e| ConvError::Other(format!("failed to render {href}: {e}")))?;
-    wait_for_fonts_ready(tab);
-    let bytes = tab
-        .print_to_pdf(Some(chapter_print_options(opts)))
-        .map_err(|e| ConvError::Other(format!("print_to_pdf failed for {href}: {e}")))?;
-    lopdf::Document::load_mem(&bytes).map_err(|e| ConvError::Other(format!("failed to parse rendered PDF for {href}: {e}")))
+/// A Chrome tab that is locked down for untrusted book markup (see
+/// `open_locked_down_tab`) and can serve one page from memory.
+pub(super) struct BookTab {
+    tab: Arc<Tab>,
+    served: Arc<Mutex<Option<ServedPage>>>,
+}
+
+struct ServedPage {
+    path: PathBuf,
+    content_type: &'static str,
+    body_base64: String,
+}
+
+impl BookTab {
+    /// Prints `html` as the page at `path`. Chrome loads it from the URL of
+    /// `path`, so relative images and stylesheets resolve as for the file,
+    /// and a footnote link such as `thisfile.xhtml#note3` stays a link in
+    /// the same document, which Chrome needs to make a working `/Dest`. The
+    /// file on disk is not read or changed.
+    pub(super) fn print(&self, path: &Path, html: &str, print_opts: PrintToPdfOptions, label: &str) -> Result<lopdf::Document, ConvError> {
+        use base64::Engine;
+        *lock(&self.served) = Some(ServedPage {
+            path: path.to_path_buf(),
+            content_type: content_type_for(path),
+            body_base64: base64::engine::general_purpose::STANDARD.encode(html),
+        });
+        let result = self.navigate_and_print(path, print_opts, label);
+        *lock(&self.served) = None;
+        result
+    }
+
+    fn navigate_and_print(&self, path: &Path, print_opts: PrintToPdfOptions, label: &str) -> Result<lopdf::Document, ConvError> {
+        let url = format!("file://{}", path.display());
+        self.tab
+            .navigate_to(&url)
+            .map_err(|e| ConvError::Other(format!("failed to load {label}: {e}")))?;
+        self.tab
+            .wait_until_navigated()
+            .map_err(|e| ConvError::Other(format!("failed to render {label}: {e}")))?;
+        wait_for_fonts_ready(&self.tab);
+        let bytes = self
+            .tab
+            .print_to_pdf(Some(print_opts))
+            .map_err(|e| ConvError::Other(format!("print_to_pdf failed for {label}: {e}")))?;
+        lopdf::Document::load_mem(&bytes).map_err(|e| ConvError::Other(format!("failed to parse rendered PDF for {label}: {e}")))
+    }
+}
+
+/// Chrome picks the parser for a `file://` page from its extension. A
+/// served page must get the same parser, because the strict XHTML parser
+/// refuses markup that the HTML parser accepts.
+fn content_type_for(path: &Path) -> &'static str {
+    match path.extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase).as_deref() {
+        Some("xhtml" | "xht" | "xml") => "application/xhtml+xml; charset=utf-8",
+        _ => "text/html; charset=utf-8",
+    }
+}
+
+/// A poisoned lock only means another render panicked. The served page is
+/// replaced before each use, so its value is still safe to use.
+fn lock<T>(m: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 /// Chrome's `print_to_pdf` turns a same-document fragment link (`<a
@@ -197,14 +246,10 @@ fn cover_print_options(opts: &RenderOptions) -> PrintToPdfOptions {
 }
 
 /// Waits for `document.fonts.ready` before printing. `wait_until_navigated`
-/// only guarantees the DOM load event fired — it says nothing about
-/// `@font-face` fonts (this book declares six, loaded from local .otf
-/// files) finishing their *own* async load, which races independently of
-/// page load. Printing before a font swap finishes is a plausible source
-/// of corrupted-looking text (values mid-reflow) — matches why calibre's
-/// own Chromium-based PDF renderer explicitly waits a settle period after
-/// load before printing (see `html_writer.py`'s `settle_time`). Best-effort:
-/// a failure here shouldn't abort the whole conversion over one chapter.
+/// waits only for the load event, and `@font-face` fonts can finish later.
+/// Printing during a font swap can give corrupted text. calibre waits for
+/// the same reason (`settle_time` in `html_writer.py`). A failure here is
+/// ignored: one chapter must not stop the whole conversion.
 fn wait_for_fonts_ready(tab: &Tab) {
     let _ = tab.evaluate(
         "(document.fonts ? document.fonts.ready : Promise.resolve()).then(() => true)",
@@ -216,7 +261,7 @@ fn wait_for_fonts_ready(tab: &Tab) {
 /// may load only files inside the book (and `data:` URIs): no network, and
 /// no other local files, which an `<iframe src="file:///...">` could
 /// otherwise print into the PDF.
-pub(super) fn open_locked_down_tab(browser: &Browser, content_dir: &Path) -> Result<Arc<Tab>, ConvError> {
+pub(super) fn open_locked_down_tab(browser: &Browser, content_dir: &Path) -> Result<BookTab, ConvError> {
     fn fail(what: &str, e: impl std::fmt::Display) -> ConvError {
         ConvError::Other(format!("failed to {what}: {e}"))
     }
@@ -228,7 +273,23 @@ pub(super) fn open_locked_down_tab(browser: &Browser, content_dir: &Path) -> Res
     let every_request =
         Fetch::RequestPattern { url_pattern: Some("*".into()), resource_Type: None, request_stage: Some(Fetch::RequestStage::Request) };
     tab.enable_fetch(Some(&[every_request]), None).map_err(|e| fail("filter requests", e))?;
+    let served: Arc<Mutex<Option<ServedPage>>> = Arc::default();
+    let served_in_handler = served.clone();
     tab.enable_request_interception(Arc::new(move |_transport, _session, event: Fetch::events::RequestPausedEvent| {
+        let request_path = file_url_path(&event.params.request.url);
+        if let Some(page) = lock(&served_in_handler).as_ref().filter(|p| request_path.as_deref() == Some(p.path.as_path())) {
+            return RequestPausedDecision::Fulfill(Fetch::FulfillRequest {
+                request_id: event.params.request_id,
+                response_code: 200,
+                response_headers: Some(vec![Fetch::HeaderEntry {
+                    name: "Content-Type".into(),
+                    value: page.content_type.into(),
+                }]),
+                binary_response_headers: None,
+                body: Some(page.body_base64.clone()),
+                response_phrase: None,
+            });
+        }
         if url_is_inside_book(&event.params.request.url, &book_root) {
             RequestPausedDecision::Continue(None)
         } else {
@@ -239,17 +300,21 @@ pub(super) fn open_locked_down_tab(browser: &Browser, content_dir: &Path) -> Res
         }
     }))
     .map_err(|e| fail("filter requests", e))?;
-    Ok(tab)
+    Ok(BookTab { tab, served })
 }
 
 fn url_is_inside_book(url: &str, book_root: &Path) -> bool {
     if url.starts_with("data:") {
         return true;
     }
-    let Some(rest) = url.strip_prefix("file://") else { return false };
+    file_url_path(url).and_then(|p| p.canonicalize().ok()).is_some_and(|p| p.starts_with(book_root))
+}
+
+/// The local path a `file://` URL names, without its query or fragment.
+fn file_url_path(url: &str) -> Option<PathBuf> {
+    let rest = url.strip_prefix("file://")?;
     let path = rest.split(['?', '#']).next().unwrap_or("");
-    let Some(decoded) = href::percent_decode(path) else { return false };
-    Path::new(&decoded).canonicalize().is_ok_and(|p| p.starts_with(book_root))
+    href::percent_decode(path).map(PathBuf::from)
 }
 
 pub(super) fn launch_browser(path: &Path) -> Result<Browser, ConvError> {
@@ -263,32 +328,17 @@ pub(super) fn launch_browser(path: &Path) -> Result<Browser, ConvError> {
 }
 
 pub(super) fn render_cover_page(
-    tab: &Tab,
+    tab: &BookTab,
     cover_bytes: &[u8],
     content_dir: &Path,
     render_opts: &RenderOptions,
 ) -> Result<lopdf::Document, ConvError> {
-    use base64::Engine;
-    let mime = sniff_image_mime(cover_bytes);
-    let encoded = base64::engine::general_purpose::STANDARD.encode(cover_bytes);
+    let src = data_uri(sniff_image_mime(cover_bytes), cover_bytes);
     let html = format!(
         "<html><body style=\"margin:0;display:flex;align-items:center;justify-content:center;height:100vh\">\
-         <img src=\"data:{mime};base64,{encoded}\" style=\"max-width:100%;max-height:100%\"/></body></html>"
+         <img src=\"{src}\" style=\"max-width:100%;max-height:100%\"/></body></html>"
     );
+    // No file exists at this path: the tab serves the page from memory.
     let cover_path = content_dir.join("__anyform_cover.html");
-    std::fs::write(&cover_path, html)?;
-    let url = format!("file://{}", cover_path.display());
-    let result = (|| -> Result<lopdf::Document, ConvError> {
-        tab.navigate_to(&url)
-            .map_err(|e| ConvError::Other(format!("failed to load cover page: {e}")))?;
-        tab.wait_until_navigated()
-            .map_err(|e| ConvError::Other(format!("failed to render cover page: {e}")))?;
-        let bytes = tab
-            .print_to_pdf(Some(cover_print_options(render_opts)))
-            .map_err(|e| ConvError::Other(format!("print_to_pdf failed for cover: {e}")))?;
-        lopdf::Document::load_mem(&bytes)
-            .map_err(|e| ConvError::Other(format!("failed to parse cover PDF: {e}")))
-    })();
-    let _ = std::fs::remove_file(&cover_path);
-    result
+    tab.print(&cover_path, &html, cover_print_options(render_opts), "cover page")
 }

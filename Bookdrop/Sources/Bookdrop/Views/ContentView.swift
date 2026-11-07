@@ -57,7 +57,7 @@ struct ContentView: View {
             case .multipleFiles(let model):
                 MultipleFilesView(
                     model: model, options: coordinator.pdfOptions, format: $coordinator.outputFormat,
-                    historyStore: historyStore,
+                    conversions: coordinator.conversions,
                     onDone: { coordinator.screen = .empty })
             }
         }

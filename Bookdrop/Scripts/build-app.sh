@@ -1,8 +1,8 @@
 #!/bin/bash
 # Assembles Bookdrop.app from the SwiftPM executable + Resources/Info.plist +
 # Resources/AppIcon.icns. Needed for the Dock icon to actually show and for
-# UNUserNotificationCenter to work (both require a real bundle identifier) —
-# `swift run` alone can't provide either.
+# UNUserNotificationCenter to work (both require a real bundle identifier).
+# `swift run` alone cannot provide either.
 set -euo pipefail
 
 CONFIG="${1:-debug}"
@@ -15,7 +15,7 @@ echo "Building anyform engine (Rust)..."
 "$ROOT_DIR/rust/scripts/fetch-pdfium.sh"
 "$ROOT_DIR/rust/scripts/build-ffi.sh"
 
-# Only `release` builds universal (arm64 + x86_64) — it's the one config that
+# Only `release` builds universal (arm64 + x86_64): it is the one config that
 # ships in a DMG. `debug` stays host-arch-only on purpose: building the whole
 # Swift module twice would tax every local `build-app.sh debug` iteration for
 # a slice nobody runs during development. If this ever needs revisiting,
@@ -29,7 +29,7 @@ if [ "$CONFIG" = "release" ]; then
     # 27, .build/out/ after), so ask SwiftPM for it instead of hardcoding it.
     BUILT_EXE="$(swift build -c release --arch arm64 --arch x86_64 --package-path "$ROOT_DIR" --show-bin-path)/Bookdrop"
 
-    # A single-arch release binary must never silently ship — the failure
+    # A single-arch release binary must never silently ship: the failure
     # mode (an Intel user's app refusing to launch) is otherwise invisible
     # until someone actually tries it on Intel hardware.
     [ -f "$BUILT_EXE" ] || { echo "build-app.sh: universal build produced no binary at $BUILT_EXE" >&2; exit 1; }
@@ -53,30 +53,21 @@ cp "$ROOT_DIR/Resources/Info.plist" "$APP_DIR/Contents/Info.plist"
 cp "$ROOT_DIR/Resources/AppIcon.icns" "$APP_DIR/Contents/Resources/AppIcon.icns"
 
 # Bundle the vendored headless-Chromium binary for BOTH architectures
-# (see rust/scripts/fetch-chromium.sh), at Contents/Resources/Chromium/<arch>/
-# — RustConversionEngine.swift picks the matching one at runtime via
-# `#if arch(...)`, same as Rust's own resolve_chromium_path fallback does
-# via `cfg!(target_arch)`. For `release`, the Bookdrop executable above is
-# itself a universal (arm64 + x86_64) binary, so `#if arch(...)` is a
-# *compile-time* branch baked into each slice — the kernel/Rosetta picks
-# the slice at launch, and that slice's own compiled-in branch resolves
-# the matching Chromium/Boko directory below. Bundling both variants is
-# what makes that resolution correct once the executable itself is fat;
-# `debug` stays host-arch-only (see above), so on debug only the host's
-# own Chromium/Boko variant is ever actually exercised.
+# (see rust/scripts/fetch-chromium.sh), at Contents/Resources/Chromium/<arch>/.
+# BundledTools.swift picks the matching one with `#if arch(...)`. In the
+# universal release executable that is a compile-time branch in each
+# slice, and the system picks the slice at launch, so both variants must
+# be in the bundle. `debug` is host-arch only (see above).
 #
-# Copies the *entire* chrome-headless-shell-<platform>/ directory, not
-# just the executable — it's not a standalone binary, it needs its sibling
-# icudtl.dat/*.pak/v8_context_snapshot*/dylibs/resources/ alongside it at
-# runtime or it SIGTRAPs on startup (found live: the executable ran fine
-# invoked directly with those siblings present, but crashed instantly once
-# copied out on its own — Chromium's own fatal-init-failure abort, not a
-# code-signing issue despite the crash report's misleading "codeSigningMonitor"
-# field).
+# Copies the whole chrome-headless-shell-<platform>/ directory, not only
+# the executable. It needs its icudtl.dat, *.pak, v8_context_snapshot*,
+# dylibs and resources beside it, or it crashes (SIGTRAP) at startup. The
+# crash report says "codeSigningMonitor", but the cause is the missing
+# files, not code signing.
 for CHROMIUM_PLATFORM in mac-arm64 mac-x64; do
     CHROMIUM_SRC_DIR="$ROOT_DIR/rust/vendor/chromium/$CHROMIUM_PLATFORM/chrome-headless-shell-$CHROMIUM_PLATFORM"
     if [ ! -x "$CHROMIUM_SRC_DIR/chrome-headless-shell" ]; then
-        echo "build-app.sh: missing $CHROMIUM_SRC_DIR/chrome-headless-shell — run rust/scripts/fetch-chromium.sh" >&2
+        echo "build-app.sh: missing $CHROMIUM_SRC_DIR/chrome-headless-shell; run rust/scripts/fetch-chromium.sh" >&2
         exit 1
     fi
     mkdir -p "$APP_DIR/Contents/Resources/Chromium/$CHROMIUM_PLATFORM"
@@ -85,7 +76,7 @@ for CHROMIUM_PLATFORM in mac-arm64 mac-x64; do
 done
 
 # Bundle the vendored `boko` binary for both architectures, at
-# Contents/Resources/Boko/<arch>/ — used by KindleInput to normalize
+# Contents/Resources/Boko/<arch>/. KindleInput uses it to normalize
 # AZW3/KFX/MOBI into EPUB before the regular pipeline runs. Unlike
 # Chromium this *is* a standalone executable with no sibling resources,
 # so a plain file copy is enough.
@@ -98,7 +89,7 @@ done
 for BOKO_PLATFORM in mac-arm64 mac-x64; do
     BOKO_SRC="$ROOT_DIR/rust/vendor/boko/$BOKO_PLATFORM/boko"
     if [ ! -x "$BOKO_SRC" ]; then
-        echo "build-app.sh: missing $BOKO_SRC — run rust/scripts/fetch-boko.sh" >&2
+        echo "build-app.sh: missing $BOKO_SRC; run rust/scripts/fetch-boko.sh" >&2
         exit 1
     fi
     mkdir -p "$APP_DIR/Contents/Resources/Boko/$BOKO_PLATFORM"
@@ -109,15 +100,15 @@ cp "$ROOT_DIR/rust/vendor/boko/LICENSE-NOTICE.txt" "$APP_DIR/Contents/Resources/
 cp "$ROOT_DIR"/rust/vendor/boko/boko-*-source.tar.gz "$APP_DIR/Contents/Resources/Boko/"
 
 # Bundle the vendored `libpdfium.dylib` for both architectures, at
-# Contents/Resources/Pdfium/<arch>/ — used by PdfInput to read PDF files.
+# Contents/Resources/Pdfium/<arch>/. PdfInput uses it to read PDF files.
 # Unlike boko, PDFium's license (BSD-3-Clause + permissively-licensed
-# third-party components — see rust/scripts/fetch-pdfium.sh) is directly
+# third-party components, see rust/scripts/fetch-pdfium.sh) is directly
 # linkable/loadable with no source-offer obligation, so only the license
 # attribution text travels with it, no source tarball.
 for PDFIUM_PLATFORM in mac-arm64 mac-x64; do
     PDFIUM_SRC="$ROOT_DIR/rust/vendor/pdfium/$PDFIUM_PLATFORM/libpdfium.dylib"
     if [ ! -f "$PDFIUM_SRC" ]; then
-        echo "build-app.sh: missing $PDFIUM_SRC — run rust/scripts/fetch-pdfium.sh" >&2
+        echo "build-app.sh: missing $PDFIUM_SRC; run rust/scripts/fetch-pdfium.sh" >&2
         exit 1
     fi
     mkdir -p "$APP_DIR/Contents/Resources/Pdfium/$PDFIUM_PLATFORM"
@@ -126,8 +117,8 @@ done
 cp "$ROOT_DIR/rust/vendor/pdfium/LICENSE-NOTICE.txt" "$APP_DIR/Contents/Resources/Pdfium/LICENSE-NOTICE.txt"
 
 # Ad-hoc sign so Gatekeeper doesn't block the bundled Chromium binary or a
-# statically-linked Rust std that isn't signed by a real Developer ID —
-# fine for local builds; a distributed build needs a real signing identity.
+# statically-linked Rust std that isn't signed by a real Developer ID.
+# That is enough for local builds; a distributed build needs a real signing identity.
 codesign --force --deep --sign - "$APP_DIR"
 
 # Refresh Launch Services / Dock icon caches so the new icon shows immediately.

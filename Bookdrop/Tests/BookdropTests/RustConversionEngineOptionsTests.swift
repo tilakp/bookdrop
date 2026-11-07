@@ -3,12 +3,10 @@ import XCTest
 @testable import Bookdrop
 
 /// Drives a real conversion through `AppCoordinator` (the same entry point
-/// the UI uses) with non-default `PDFOptions`, to prove those options
-/// actually reach the Rust engine — not just that the Rust engine honors
-/// options when handed a hand-built JSON blob directly (covered in
-/// `anyform-doc/tests/pdf_tests.rs`), but that Swift's own JSON-building
-/// code (`RustConversionEngine.conversionOptionsJSON`) wires every field
-/// correctly. Real (bundled-Chromium-backed) PDF renders, not mocked.
+/// the UI uses) with non-default `PDFOptions`, to prove that Swift's JSON
+/// (`conversionOptionsJSON`) wires each field to the engine. The engine
+/// refuses an option name it does not know, so a misspelled name fails
+/// here. Real PDF renders with the bundled Chromium, not mocks.
 @MainActor
 final class RustConversionEngineOptionsTests: XCTestCase {
     private func fixtureURL() -> URL {
@@ -26,8 +24,8 @@ final class RustConversionEngineOptionsTests: XCTestCase {
     private func makeCoordinator() -> AppCoordinator {
         let history = HistoryStore(directory: scratchDir("history"))
         let settings = SettingsStore(defaults: InMemoryKeyValueStore())
-        let coordinator = AppCoordinator(historyStore: history, settingsStore: settings)
-        coordinator.performSideEffects = false
+        let coordinator = AppCoordinator(
+            historyStore: history, settingsStore: settings, sideEffects: RecordingSideEffects())
         return coordinator
     }
 

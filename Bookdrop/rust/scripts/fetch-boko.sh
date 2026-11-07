@@ -2,7 +2,7 @@
 # Downloads the pinned `boko` release binary for BOTH macOS architectures
 # into rust/vendor/boko/<platform>/ so KindleInput can convert Kindle-family
 # formats (AZW3/KFX/MOBI) without depending on anything installed on the
-# user's machine — same bundling approach as fetch-chromium.sh.
+# user's machine. It bundles the same way as fetch-chromium.sh.
 #
 # Why a bundled subprocess rather than a linked crate: boko is
 # GPL-3.0-or-later and Bookdrop is MIT. Invoking it as a separate program
@@ -13,7 +13,7 @@
 #
 # Version is pinned (not "latest") so builds are reproducible; bump
 # BOKO_VERSION deliberately when updating. Every download is checksum-
-# verified against the sha256 the release publishes — a bundled binary that
+# verified against the sha256 the release publishes: a bundled binary that
 # ships inside a signed .app should never be taken on trust.
 set -euo pipefail
 
@@ -92,7 +92,7 @@ fetch_source() {
     verify_sha256 "$source_tarball" "$BASE_URL/source.tar.gz.sha256"
 
     cat > "$VENDOR_DIR/LICENSE-NOTICE.txt" <<EOF
-boko v$BOKO_VERSION — https://github.com/zacharydenton/boko
+boko v$BOKO_VERSION: https://github.com/zacharydenton/boko
 Copyright (c) the boko authors.
 Licensed under the GNU General Public License v3.0 or later.
 

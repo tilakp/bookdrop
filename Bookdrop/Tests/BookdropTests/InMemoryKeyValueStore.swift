@@ -1,7 +1,7 @@
 import Foundation
 @testable import Bookdrop
 
-/// Pure in-memory `KeyValueStore` for tests — no filesystem or `cfprefsd`
+/// Pure in-memory `KeyValueStore` for tests: no filesystem or `cfprefsd`
 /// interaction at all, so there's nothing to leak or clean up.
 final class InMemoryKeyValueStore: KeyValueStore {
     private var storage: [String: Data] = [:]

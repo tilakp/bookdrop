@@ -34,7 +34,7 @@ ctx.drawLinearGradient(
     options: []
 )
 
-// Subtle inner top highlight for a touch of glossiness — a smooth gradient
+// Subtle inner top highlight for a touch of glossiness: a smooth gradient
 // rather than a hard-edged rect, so there's no visible seam.
 let highlightColors = [
     NSColor.white.withAlphaComponent(0.16).cgColor,
@@ -52,7 +52,7 @@ ctx.drawLinearGradient(
 ctx.restoreGState()
 
 // Glyph: the same "arrow.down.doc" motif used in the app's own drop zone, in
-// white, centered — ties the Dock icon directly to the in-app visual language.
+// white, centered. It ties the Dock icon to the in-app visual language.
 let glyphConfig = NSImage.SymbolConfiguration(pointSize: 440, weight: .medium)
 if let symbol = NSImage(systemSymbolName: "arrow.down.doc.fill", accessibilityDescription: nil)?
     .withSymbolConfiguration(glyphConfig)

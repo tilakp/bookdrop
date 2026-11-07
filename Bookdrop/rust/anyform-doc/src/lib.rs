@@ -6,10 +6,13 @@ mod html;
 mod htmltext;
 mod ir;
 mod kindle;
+mod markup;
+mod options;
 mod pdf;
 mod pdf_input;
 mod pdf_layout;
 mod pdfium;
+mod tools;
 mod txt;
 
 pub use docx::DocxOutput;
@@ -26,19 +29,13 @@ use std::sync::Arc;
 
 use anyform_core::Registry;
 
-/// The document-family registry — EPUB, Kindle-family (AZW3/KFX/MOBI), and
-/// PDF input; PDF/EPUB/TXT/HTML/DOCX output. Kindle formats are normalized
-/// to EPUB by the bundled `boko` binary, so they reach every output format
-/// below without a dedicated path each; registering `PdfInput` similarly
-/// makes `.pdf` sources reach every output format for free, since
-/// `Registry::convert` dispatches input and output plugins independently
-/// by extension. PDF input/output are the only formats needing an external
-/// engine (bundled pdfium / headless Chromium respectively); the rest are
-/// pure Rust — EPUB is a faithful repackage of the IR, TXT/DOCX share
-/// `htmltext.rs`'s chapter-XHTML extractor, HTML emits markup directly.
-/// `PdfInput` is a deliberately-scoped MVP (text-layer, single-column PDFs
-/// only — see its own doc comment) that reconstructs reflowable chapter
-/// structure via `pdf_layout.rs`'s heuristics.
+/// The document registry. Input: EPUB, Kindle (AZW3, AZW, KFX, MOBI) and
+/// PDF. Output: PDF, EPUB, TXT, HTML and DOCX. The registry picks the input
+/// and output plugins separately by extension, so every input reaches
+/// every output. Kindle files become EPUB through the bundled `boko`, and
+/// PDF input writes XHTML chapters, so both look like an EPUB to the
+/// output plugins. Only PDF input (pdfium) and PDF output (Chromium) need
+/// a bundled engine. The other formats are pure Rust.
 pub fn document_registry() -> Registry<DocumentIR> {
     let mut r = Registry::new();
     r.add_input(Arc::new(EpubInput));

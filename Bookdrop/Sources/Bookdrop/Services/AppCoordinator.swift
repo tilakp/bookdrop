@@ -1,5 +1,4 @@
 import Foundation
-import AppKit
 import PDFKit
 
 /// Owns the app's screen state machine and conversion flow. Pulled out of `ContentView`
@@ -22,16 +21,18 @@ final class AppCoordinator: ObservableObject {
 
     let historyStore: HistoryStore
     let settingsStore: SettingsStore
-
-    /// Disabled in tests so conversions don't open Finder/PDF viewers or fire real
-    /// system notifications as a side effect of running the test suite.
-    var performSideEffects = true
+    let conversions: ConversionService
 
     private var conversionTask: Task<Void, Never>?
 
-    init(historyStore: HistoryStore, settingsStore: SettingsStore) {
+    init(
+        historyStore: HistoryStore, settingsStore: SettingsStore,
+        sideEffects: ConversionSideEffects = SystemSideEffects()
+    ) {
         self.historyStore = historyStore
         self.settingsStore = settingsStore
+        self.conversions = ConversionService(
+            historyStore: historyStore, settingsStore: settingsStore, sideEffects: sideEffects)
         self.outputDirectory = Self.defaultOutputDirectory(for: settingsStore.defaultOutputLocation)
         if settingsStore.rememberLastOutputFormat, let last = settingsStore.lastOutputFormat {
             self.outputFormat = last
@@ -107,15 +108,11 @@ final class AppCoordinator: ObservableObject {
         case .replace:
             let url = outputDirectory.appendingPathComponent(
                 sanitizedFilename(book.title) + "." + outputFormat.fileExtension)
-            // No input format shared an extension with any output format
-            // until PdfInput landed — `.pdf -> .pdf` ("clean up this PDF")
-            // is now a real, legitimate conversion, and if the output
-            // directory is the source's own folder with a title-derived
-            // name matching the original filename, `url` can resolve to
-            // the exact same file as `book.sourceURL`. Replacing it would
-            // truncate the user's original file. Silently fall back to
-            // Keep Both rather than destroy it — the conversion itself is
-            // still exactly what was requested, just not an overwrite.
+            // PDF to PDF is a valid conversion. If the output folder is the
+            // source's folder and the title gives the source's file name,
+            // `url` is the source file, and replacing it would destroy the
+            // original. Keep both instead: the conversion is still the one
+            // that was asked for, only not an overwrite.
             if isSameFile(url, book.sourceURL) {
                 let keepBothURL = nextAvailableURL(
                     directory: outputDirectory, baseName: sanitizedFilename(book.title),
@@ -131,8 +128,8 @@ final class AppCoordinator: ObservableObject {
         }
     }
 
-    /// Compares filesystem identity (resolved/standardized path), not just
-    /// string equality — robust to symlinks and the kind of path noise
+    /// Compares resolved, standardized paths, not plain strings, so that
+    /// symlinks and the kind of path noise
     /// `.standardizedFileURL` normalizes away.
     private func isSameFile(_ a: URL, _ b: URL) -> Bool {
         a.resolvingSymlinksInPath().standardizedFileURL.path == b.resolvingSymlinksInPath().standardizedFileURL.path
@@ -156,29 +153,11 @@ final class AppCoordinator: ObservableObject {
     /// (bypassing the `Task` wrapper `startConversion` uses for fire-and-forget UI calls).
     func performConversion(book: Book, outputURL: URL, progress: ConversionProgress) async {
         do {
-            let resultURL = try await RustConversionEngine.convert(
-                book: book, options: pdfOptions, outputURL: outputURL, progress: progress)
+            let resultURL = try await conversions.convert(
+                book: book, format: outputFormat, options: pdfOptions, outputURL: outputURL, progress: progress)
             let pageCount = outputFormat == .pdf ? PDFDocument(url: resultURL)?.pageCount : nil
-            let info = CompletionInfo(outputURL: resultURL, pageCount: pageCount)
-            historyStore.add(
-                HistoryEntry(
-                    title: book.title,
-                    conversionLabel: "\(book.sourceURL.pathExtension.uppercased()) → \(outputFormat.rawValue)",
-                    outputPath: resultURL.path, sourcePath: book.sourceURL.path))
-
-            if performSideEffects {
-                if settingsStore.showNotification {
-                    NotificationService.notifyConversionComplete(
-                        bookTitle: book.title, format: outputFormat, outputURL: resultURL)
-                }
-                if settingsStore.revealInFinder {
-                    NSWorkspace.shared.activateFileViewerSelecting([resultURL])
-                }
-                if settingsStore.openConvertedFile {
-                    NSWorkspace.shared.open(resultURL)
-                }
-            }
-            screen = .complete(info)
+            conversions.finish(converted: [(book.title, resultURL)], format: outputFormat)
+            screen = .complete(CompletionInfo(outputURL: resultURL, pageCount: pageCount))
         } catch is CancellationError {
             screen = .loaded(book)
         } catch let error as EngineError where error.isCancellation {

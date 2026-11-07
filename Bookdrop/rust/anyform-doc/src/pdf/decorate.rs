@@ -96,7 +96,7 @@ fn add_font_to_resources(resources: &mut Dictionary, font_id: ObjectId) {
 
 fn centered_text_ops(text: &str, font_size: f64, page_width_pt: f64, y: f64) -> Vec<Operation> {
     // Rough Helvetica average-advance-width estimate (not real glyph
-    // metrics) — fine for centering a short title/page-number string.
+    // metrics). That is enough to center a short title or page number.
     let approx_width = text.chars().count() as f64 * font_size * 0.5;
     let x = ((page_width_pt - approx_width) / 2.0).max(0.0);
     vec![

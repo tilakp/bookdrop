@@ -178,7 +178,7 @@ fn pdf_input_output_epub_passes_epubcheck() {
     // epub_output.rs's own doc comment already establishes that a
     // freshly-generated (not byte-copied) chapter set round-trips through
     // `EpubOutput` with zero epubcheck errors - PdfInput's synthesized
-    // XHTML chapters are exactly that case (see pdf_layout.rs's
+    // XHTML chapters are exactly that case (see pdf_layout/xhtml.rs's
     // `render_chapter_xhtml`), so this should hold here too, unlike the
     // EPUB2-source case epub_output.rs documents as a known exception.
     //

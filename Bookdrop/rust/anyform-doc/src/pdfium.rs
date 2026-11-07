@@ -1,8 +1,5 @@
 //! The only module that calls pdfium. Everything else works on the plain
-//! structs it returns, so `pdf_layout.rs` can be tested without the dylib.
-//!
-//! Library lookup matches `kindle.rs` and `pdf/mod.rs`: the `pdfium_path`
-//! option, then `ANYFORM_PDFIUM_PATH`, then the vendored dev-tree copy.
+//! structs it returns, so `pdf_layout` can be tested without the dylib.
 //!
 //! Thread safety: `pdfium-render`'s `thread_safe` feature locks each FFI
 //! call, but that is not enough. Four threads that open and read different
@@ -12,7 +9,7 @@
 //! `concurrent_pdf_conversions_do_not_crash_pdfium` keeps this tested:
 //! ordinary parallel tests, one PDF each, did not reproduce the crash.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::{Mutex, OnceLock};
 
 use pdfium_render::prelude::*;
@@ -20,6 +17,7 @@ use pdfium_render::prelude::*;
 use anyform_core::{ConvError, Log, Options};
 
 use crate::pdf_layout::{Glyph, OutlineEntry, PageText};
+use crate::tools;
 
 /// Bound exactly once for the lifetime of the process (`Pdfium::new` panics
 /// on a second call), reused for every subsequent conversion.  Stores a
@@ -31,16 +29,14 @@ static PDFIUM: OnceLock<Result<Pdfium, String>> = OnceLock::new();
 /// Held for the entire body of `extract()` - see the module doc comment.
 static EXTRACT_LOCK: Mutex<()> = Mutex::new(());
 
-/// Binds the library on first use (honoring a caller-supplied `pdfium_path`
-/// in `opts` at that point) and reuses the same instance thereafter - once
-/// bound, later calls with a different `opts` still reuse it, matching how
-/// `resolve_boko_path` is also only meaningfully consulted once per process
-/// in practice (the app always passes the same bundled path).
+/// Binds the library on first use, with the `pdfium_path` in `opts` at that
+/// time, and reuses it after that, also for calls with a different path.
+/// The app always passes the same bundled path.
 fn bindings(opts: &Options) -> Result<&'static Pdfium, ConvError> {
     // A missing library is reported without being cached, so a later call
     // that passes the right `pdfium_path` still succeeds.
     if PDFIUM.get().is_none() {
-        let path = resolve_pdfium_path(opts).map_err(ConvError::ToolMissing)?;
+        let path = tools::PDFIUM.resolve(opts)?;
         PDFIUM.get_or_init(|| {
             let lib = Pdfium::bind_to_library(&path).map_err(|e| format!("failed to load the bundled PDF reader: {e}"))?;
             Ok(Pdfium::new(lib))
@@ -49,32 +45,6 @@ fn bindings(opts: &Options) -> Result<&'static Pdfium, ConvError> {
     PDFIUM.get().expect("set above").as_ref().map_err(|e| ConvError::Other(e.clone()))
 }
 
-fn resolve_pdfium_path(opts: &Options) -> Result<PathBuf, String> {
-    if let Some(p) = opts.get_str("pdfium_path") {
-        let path = PathBuf::from(p);
-        if path.exists() {
-            return Ok(path);
-        }
-    }
-    if let Ok(p) = std::env::var("ANYFORM_PDFIUM_PATH") {
-        let path = PathBuf::from(p);
-        if path.exists() {
-            return Ok(path);
-        }
-    }
-    let platform = if cfg!(target_arch = "aarch64") { "mac-arm64" } else { "mac-x64" };
-    let dev_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../vendor/pdfium")
-        .join(platform)
-        .join("libpdfium.dylib");
-    if dev_path.exists() {
-        return Ok(dev_path);
-    }
-
-    Err("no bundled PDF reader found — set the \"pdfium_path\" option, \
-         ANYFORM_PDFIUM_PATH, or run scripts/fetch-pdfium.sh"
-        .into())
-}
 
 pub(crate) struct DocumentProbe {
     pub page_count: usize,
@@ -180,7 +150,7 @@ fn extract_page(page: &PdfPage, index: usize) -> PageText {
 /// top-level bookmark, not a synthetic invisible root - `next_sibling()`
 /// from there visits the rest) and recurses into `iter_direct_children()`
 /// for nested entries, preserving both document order and hierarchy for
-/// `ir.toc`. `split_chapters` in `pdf_layout.rs` only uses the top level
+/// `ir.toc`. `split_chapters` in `pdf_layout/chapters.rs` only uses the top level
 /// for chapter boundaries; the full tree is kept for the nav/TOC.
 fn extract_outline(doc: &PdfDocument) -> Vec<OutlineEntry> {
     let mut entries = Vec::new();

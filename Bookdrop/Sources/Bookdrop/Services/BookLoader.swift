@@ -13,7 +13,9 @@ struct UnsupportedFormatError: LocalizedError, Equatable {
     }
 
     var recoverySuggestion: String? {
-        "Bookdrop opens EPUB, Kindle (AZW3, AZW, KFX, MOBI) and PDF files."
+        let names = EngineFormats.shared.inputExtensions.map { $0.uppercased() }
+        let list = names.count > 1 ? names.dropLast().joined(separator: ", ") + " and " + names.last! : names.joined()
+        return "Bookdrop opens \(list) files."
     }
 }
 
@@ -21,7 +23,7 @@ struct UnsupportedFormatError: LocalizedError, Equatable {
 /// Kindle, PDF) goes through the Rust engine, the same code that later
 /// converts it, so the app has one parser and one set of security checks.
 enum BookLoader {
-    static let supportedExtensions: Set<String> = ["epub", "kepub", "pdf", "azw3", "azw", "kfx", "mobi"]
+    static let supportedExtensions = Set(EngineFormats.shared.inputExtensions)
 
     static func isSupported(_ url: URL) -> Bool {
         supportedExtensions.contains(url.pathExtension.lowercased())

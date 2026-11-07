@@ -5,7 +5,7 @@ struct MultipleFilesView: View {
     @ObservedObject var model: MultiConversionModel
     let options: PDFOptions
     @Binding var format: OutputFormat
-    let historyStore: HistoryStore
+    let conversions: ConversionService
     var onDone: () -> Void
 
     var body: some View {
@@ -149,7 +149,7 @@ struct MultipleFilesView: View {
                     .buttonStyle(.bordered)
             } else {
                 Button("Convert All") {
-                    model.start(options: options, format: format, historyStore: historyStore)
+                    model.start(options: options, format: format, conversions: conversions)
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(Color.brandPurple)

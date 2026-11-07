@@ -4,12 +4,14 @@ mod merge;
 mod render;
 
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::atomic::AtomicUsize;
 
 use anyform_core::{ConvError, Log, Options, OutputPlugin};
 
 use crate::ir::DocumentIR;
+use crate::options::{self, BookOptions};
+use crate::tools;
 
 use self::render::{render_chapters_parallel, open_locked_down_tab, launch_browser, render_cover_page};
 use self::chapter_html::{toc_fragments_by_chapter, spine_item_is_cover_page};
@@ -33,6 +35,25 @@ impl OutputPlugin<DocumentIR> for PdfOutput {
         "pdf"
     }
 
+    fn options(&self) -> &'static [&'static str] {
+        &[
+            options::INCLUDE_COVER,
+            options::GENERATE_TOC,
+            options::PAGE_WIDTH_IN,
+            options::PAGE_HEIGHT_IN,
+            options::MARGIN_IN,
+            options::FONT_FAMILY,
+            options::FONT_SIZE_PT,
+            options::LINE_SPACING,
+            options::PRESERVE_EPUB_STYLING,
+            options::REMOVE_PUBLISHER_STYLING,
+            options::SHOW_PAGE_NUMBERS,
+            options::INCLUDE_HEADERS,
+            options::INCLUDE_FOOTERS,
+            options::CHROMIUM_PATH,
+        ]
+    }
+
     fn convert(&self, ir: &DocumentIR, output: &Path, opts: &Options, log: &dyn Log) -> Result<(), ConvError> {
         if ir.spine.is_empty() {
             return Err(ConvError::NoChapters);
@@ -40,25 +61,22 @@ impl OutputPlugin<DocumentIR> for PdfOutput {
 
         let render_opts = RenderOptions::from_options(opts);
 
-        let chromium_path = resolve_chromium_path(opts)?;
+        let chromium_path = tools::CHROMIUM.resolve(opts)?;
         log.info(&format!("launching {}", chromium_path.display()));
         let browser = launch_browser(&chromium_path)?;
         let tab = open_locked_down_tab(&browser, &ir.content_dir)?;
 
-        // (href of the spine item this PDF chunk came from, None for the
-        // cover page — used afterwards to point TOC bookmarks at the right
-        // page) paired with the rendered single-chapter PDF.
+        // Each rendered PDF with the href of its spine item (None for the
+        // cover page). The merge uses the href to point bookmarks at pages.
         let mut chunks: Vec<(Option<String>, lopdf::Document)> = Vec::new();
 
         let include_synthetic_cover = render_opts.include_cover && ir.metadata.cover.is_some();
 
-        // Many EPUBs *also* have a dedicated cover page in the spine (a
-        // separate XHTML file that's just an <img> of the same cover
-        // image) — conventionally the first spine item. If we've already
-        // inserted our own synthetic cover page above, rendering that one
-        // too would duplicate the cover as page 2. Detected by checking
-        // whether the first spine item's markup references the cover
-        // image's filename, rather than assuming by position alone.
+        // Many EPUBs also have a cover page in the spine, usually first: an
+        // XHTML file with only an <img> of the cover. With our own cover
+        // page, rendering that one too would show the cover twice. It is
+        // found by its markup referring to the cover image's file name, not
+        // by its position alone.
         let skip_spine_index = if include_synthetic_cover {
             ir.metadata.cover_href.as_deref().and_then(|cover_href| {
                 let first = ir.spine.first()?;
@@ -87,8 +105,7 @@ impl OutputPlugin<DocumentIR> for PdfOutput {
             let done_count = AtomicUsize::new(if include_synthetic_cover { 1 } else { 0 });
             let rendered = render_chapters_parallel(
                 &browser,
-                &ir.content_dir,
-                &ir.spine,
+                ir,
                 &render_indices,
                 &render_opts,
                 &toc_fragments,
@@ -112,9 +129,6 @@ impl OutputPlugin<DocumentIR> for PdfOutput {
         add_page_decorations(&mut merged, &render_opts, &ir.metadata.title)?;
         set_metadata(&mut merged, ir);
 
-        if let Some(parent) = output.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
         merged
             .save(output)
             .map_err(|e| ConvError::Other(format!("failed to save PDF: {e}")))?;
@@ -122,10 +136,10 @@ impl OutputPlugin<DocumentIR> for PdfOutput {
     }
 }
 
-/// Mirrors Bookdrop's Swift `PDFOptions` (`Sources/Bookdrop/Models/PDFOptions.swift`)
-/// — field names/defaults match so an unset `Options` behaves like the
-/// Swift struct's defaults (US Letter, normal margins, 11pt/1.2 line
-/// spacing, cover+TOC on, page numbers on, headers/footers off).
+/// The PDF options. With no options set, the result matches the defaults
+/// of the app's `PDFOptions`: US Letter, 1 in margins, 15 pt type with 1.2
+/// line spacing, cover and outline on, page numbers on, headers and
+/// footers off. These are also calibre's PDF output defaults.
 struct RenderOptions {
     include_cover: bool,
     generate_toc: bool,
@@ -145,28 +159,25 @@ struct RenderOptions {
 impl RenderOptions {
     fn from_options(opts: &Options) -> Self {
         let font_family = opts
-            .get_str("font_family")
+            .get_str(options::FONT_FAMILY)
             .map(str::trim)
             .filter(|s| !s.is_empty() && *s != "Original")
             .map(str::to_string);
+        let BookOptions { include_cover, generate_toc } = BookOptions::from_options(opts);
         RenderOptions {
-            include_cover: opts.get_bool("include_cover", true),
-            generate_toc: opts.get_bool("generate_table_of_contents", true),
-            page_width_in: opts.get_f64("page_width_in", 8.5),
-            page_height_in: opts.get_f64("page_height_in", 11.0),
-            // Fallback defaults match calibre's PDF Output plugin defaults
-            // (1in margins, 15pt base font — see PDFOptions.swift for the
-            // verification) since Swift always sends these explicitly; these
-            // only apply to callers that don't (anyform-cli, bare Options::new()).
-            margin_in: opts.get_f64("margin_in", 1.0),
+            include_cover,
+            generate_toc,
+            page_width_in: opts.get_f64(options::PAGE_WIDTH_IN, 8.5),
+            page_height_in: opts.get_f64(options::PAGE_HEIGHT_IN, 11.0),
+            margin_in: opts.get_f64(options::MARGIN_IN, 1.0),
             font_family,
-            font_size_pt: opts.get_f64("font_size_pt", 15.0),
-            line_spacing: opts.get_f64("line_spacing", 1.2),
-            preserve_epub_styling: opts.get_bool("preserve_epub_styling", true),
-            remove_publisher_styling: opts.get_bool("remove_publisher_styling", false),
-            show_page_numbers: opts.get_bool("show_page_numbers", true),
-            include_headers: opts.get_bool("include_headers", false),
-            include_footers: opts.get_bool("include_footers", false),
+            font_size_pt: opts.get_f64(options::FONT_SIZE_PT, 15.0),
+            line_spacing: opts.get_f64(options::LINE_SPACING, 1.2),
+            preserve_epub_styling: opts.get_bool(options::PRESERVE_EPUB_STYLING, true),
+            remove_publisher_styling: opts.get_bool(options::REMOVE_PUBLISHER_STYLING, false),
+            show_page_numbers: opts.get_bool(options::SHOW_PAGE_NUMBERS, true),
+            include_headers: opts.get_bool(options::INCLUDE_HEADERS, false),
+            include_footers: opts.get_bool(options::INCLUDE_FOOTERS, false),
         }
     }
 
@@ -176,56 +187,5 @@ impl RenderOptions {
 
     fn page_height_pt(&self) -> f64 {
         self.page_height_in * 72.0
-    }
-}
-
-fn resolve_chromium_path(opts: &Options) -> Result<PathBuf, ConvError> {
-    if let Some(p) = opts.get_str("chromium_path") {
-        let path = PathBuf::from(p);
-        if path.exists() {
-            return Ok(path);
-        }
-    }
-    if let Ok(p) = std::env::var("ANYFORM_CHROMIUM_PATH") {
-        let path = PathBuf::from(p);
-        if path.exists() {
-            return Ok(path);
-        }
-    }
-    // Dev-time convenience: `scripts/fetch-chromium.sh` vendors the binary
-    // under `rust/vendor/chromium/<platform>/...` relative to this crate,
-    // so `cargo test`/`anyform-cli` work without extra plumbing. The FFI
-    // layer always passes an explicit `chromium_path` pointing at the
-    // app-bundle resource instead of relying on this fallback.
-    let platform = if cfg!(target_arch = "aarch64") {
-        "mac-arm64"
-    } else {
-        "mac-x64"
-    };
-    let dev_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../vendor/chromium")
-        .join(platform)
-        .join(format!("chrome-headless-shell-{platform}"))
-        .join("chrome-headless-shell");
-    if dev_path.exists() {
-        return Ok(dev_path);
-    }
-
-    Err(ConvError::ToolMissing(
-        "no bundled Chromium binary found — set the \"chromium_path\" option, \
-         ANYFORM_CHROMIUM_PATH, or run scripts/fetch-chromium.sh"
-            .into(),
-    ))
-}
-
-pub(crate) fn sniff_image_mime(bytes: &[u8]) -> &'static str {
-    if bytes.starts_with(&[0x89, 0x50, 0x4E, 0x47]) {
-        "image/png"
-    } else if bytes.starts_with(&[0xFF, 0xD8]) {
-        "image/jpeg"
-    } else if bytes.starts_with(b"GIF8") {
-        "image/gif"
-    } else {
-        "image/jpeg"
     }
 }

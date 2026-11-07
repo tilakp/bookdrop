@@ -11,7 +11,7 @@ final class FilenamesTests: XCTestCase {
     }
 
     func testSanitizedFilenameCollapsesToSeparatorsWithoutCrashing() {
-        // Not empty after cleaning, so no fallback — documents the actual (slightly
+        // Not empty after cleaning, so no fallback. Documents the actual (slightly
         // ugly but harmless) behavior for all-separator input.
         XCTAssertEqual(sanitizedFilename("///"), "---")
     }

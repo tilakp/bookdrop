@@ -91,7 +91,7 @@ swift build
 swift test
 ```
 
-47 Swift tests plus 119 Rust tests. Most of the PDF-related ones render through the real bundled
+52 Swift tests plus 124 Rust tests. Most of the PDF-related ones render through the real bundled
 Chromium binary (or read through the real bundled PDF reader) rather than mocking it, so expect
 the suite to take about 30 seconds.
 
@@ -109,8 +109,8 @@ thing, or to produce your own DMG:
 
 ## Project layout
 
-- `Bookdrop/Sources/Bookdrop/`: the app. `Models/`, `Services/` (EPUB/Kindle parsing, the
-  Rust-engine bridge, app coordinator), `Views/`, `App/`
+- `Bookdrop/Sources/Bookdrop/`: the app. `Models/`, `Services/` (the Rust-engine bridge,
+  the conversion service, app coordinator), `Views/`, `App/`
 - `Bookdrop/Sources/CAnyform/`: the C header bridge SwiftPM links against the Rust engine through
 - `Bookdrop/rust/`: the `anyform` engine. `anyform-core` (traits/registry), `anyform-doc` (EPUB/
   Kindle-family/PDF input, PDF/EPUB/TXT/HTML/DOCX output), `anyform-ffi` (the C ABI Swift calls),

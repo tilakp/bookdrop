@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # Downloads the pinned PDFium release for BOTH macOS architectures into
 # rust/vendor/pdfium/<platform>/ so PdfInput can read PDFs without depending
-# on anything installed on the user's machine — same bundling approach as
-# fetch-chromium.sh/fetch-boko.sh.
+# on anything installed on the user's machine. It bundles the same way as
+# fetch-chromium.sh and fetch-boko.sh.
 #
 # Unlike boko, PDFium (BSD-3-Clause, bundled third-party components under
-# their own permissive licenses — see licenses/ extracted below) can be
+# their own permissive licenses, see licenses/ extracted below) can be
 # linked/loaded directly into Bookdrop with no source-offer obligation, so
 # there's no source tarball to fetch, just attribution text.
 #
@@ -13,7 +13,7 @@
 # builds are reproducible; bump PDFIUM_TAG deliberately when updating.
 # bblanchon/pdfium-binaries doesn't publish a per-asset .sha256 sibling file
 # (unlike boko's releases), so the expected digest is pinned literally below
-# instead — computed once at vendoring time and cross-checked against the
+# instead. It was computed once at vendoring time and cross-checked against the
 # release's Sigstore attestation (`gh attestation verify <file> --repo
 # bblanchon/pdfium-binaries`) before being committed here. A bundled binary
 # that ships inside a signed .app should never be taken on trust.
@@ -87,18 +87,17 @@ write_license_notice() {
         return 0
     fi
     cat > "$notice" <<EOF
-PDFium (build $PDFIUM_TAG) — https://pdfium.googlesource.com/pdfium/
+PDFium (build $PDFIUM_TAG): https://pdfium.googlesource.com/pdfium/
 Prebuilt by https://github.com/bblanchon/pdfium-binaries, BSD-3-Clause.
 
 Bookdrop bundles libpdfium.dylib to read PDF files (PdfInput). Unlike
 boko, PDFium's license is permissive and imposes no source-offer
-obligation — it is loaded directly (dlopen) rather than run as a
+obligation: it is loaded directly (dlopen) rather than run as a
 subprocess. The exact license texts for PDFium itself and every
 third-party component it statically includes (freetype, libjpeg-turbo,
 zlib, lcms, icu, abseil, ...) are preserved verbatim in mac-arm64/LICENSE
-and mac-arm64/licenses/ (identical across both architectures — only one
-copy is kept per platform directory since that's how the upstream
-release ships them).
+and mac-arm64/licenses/ (the same for both architectures; each platform
+directory keeps one copy, as the upstream release ships them).
 EOF
     echo "fetch-pdfium.sh: wrote $notice"
 }

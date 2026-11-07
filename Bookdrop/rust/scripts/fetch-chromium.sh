@@ -2,17 +2,14 @@
 # Downloads the pinned chrome-headless-shell build (Chrome for Testing) for
 # BOTH macOS architectures into rust/vendor/chromium/<platform>/ so
 # PdfOutput has a bundled, self-contained headless renderer with no
-# dependency on a system Chrome install, and build-app.sh can bundle
-# whichever binary matches the architecture the app is actually running on
-# (see plan item 4 — universal Chromium bundling). Not run automatically by
-# `cargo build` — invoked explicitly by build-app.sh (and by
-# developers/CI ahead of testing).
+# dependency on a system Chrome install, and build-app.sh can bundle both
+# architectures for the universal app. `cargo build` does not run it:
+# build-app.sh does, and developers and CI run it before testing.
 #
 # Version is pinned (not "latest") so builds are reproducible; bump
 # CFT_VERSION deliberately when updating. Note: this fetches both
-# platforms unconditionally (~180MB total download) — the Rust build/test
-# itself only needs the host machine's own platform (see
-# resolve_chromium_path's dev fallback in anyform-doc/src/pdf.rs), so
+# platforms (~180MB total download). The Rust build and tests need only
+# the host's platform (see the vendored fallback in anyform-doc/src/tools.rs), so
 # `fetch-chromium.sh mac-arm64` (or `mac-x64`) fetches just one if you
 # don't need both.
 set -euo pipefail

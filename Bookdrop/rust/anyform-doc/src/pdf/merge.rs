@@ -154,7 +154,7 @@ pub(super) fn merge_chapter_pdfs(
     fix_cross_chapter_links(&mut document, content_dir, href_to_prefix, &href_to_first_page, &dest_names);
 
     if generate_toc {
-        // Bookmarks must be added before the final renumber below — lopdf's
+        // Bookmarks must be added before the final renumber below: lopdf's
         // renumber_objects_with() walks self.bookmark_table and remaps each
         // bookmark's target page id alongside every other object reference
         // (see processor.rs::renumber_bookmarks), so ids captured here stay

@@ -54,9 +54,9 @@ approximate.
   shifts the nominal 24/16/11pt CSS slightly) plus a paragraph whose final
   line happens to average out just above the *original* 1.15× heading-ratio
   threshold. Regenerate: `anyform convert heading-tiers.epub
-  heading-tiers.pdf`. This fixture caught a real false-positive — a
-  paragraph's last line ("document.") was getting promoted to its own
-  heading — which is why `HEADING_SIZE_RATIO` in `pdf_layout.rs` is 1.3,
+  heading-tiers.pdf`. This fixture caught a real false positive: a
+  paragraph's last line ("document.") was promoted to its own heading.
+  That is why `HEADING_SIZE_RATIO` in `pdf_layout/blocks.rs` is 1.3,
   not 1.15; `heading_tiers_pdf_detects_headings_at_known_sizes_without_false_positives`
   pins both the real headings and the absence of that false one.
 - `two-column.epub`/`.pdf` — CSS `column-count: 2` over enough filler text

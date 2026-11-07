@@ -79,6 +79,7 @@ dependencies = [
  "anyform-core",
  "anyform-doc",
  "base64 0.23.1",
+ "lopdf",
  "serde",
  "serde_json",
 ]

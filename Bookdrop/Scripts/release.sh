@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Builds Release, installs to /Applications, and packages a distributable
 # DMG in release/. Needs create-dmg (`brew install create-dmg`) for the
-# disk-image step — everything else (Rust engine, Chromium bundling,
-# codesigning) is handled by build-app.sh.
+# disk-image step. build-app.sh does everything else (Rust engine, Chromium bundling,
+# codesigning).
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -41,7 +41,7 @@ if command -v create-dmg >/dev/null 2>&1; then
         "$DMG" \
         "$STAGING/"
 else
-    echo "!! create-dmg not found — skipping DMG. Install it with: brew install create-dmg"
+    echo "!! create-dmg not found, skipping DMG. Install it with: brew install create-dmg"
 fi
 
 rm -rf "$STAGING"

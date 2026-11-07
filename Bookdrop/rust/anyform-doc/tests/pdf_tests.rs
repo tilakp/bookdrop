@@ -11,9 +11,9 @@ fn fixture_path() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/minimal.epub")
 }
 
-// cargo test runs these in parallel threads within one process, so
-// std::process::id() alone isn't a unique-enough output filename — each
-// test needs its own name suffix to avoid racing another test's file.
+// cargo test runs these in parallel threads in one process, so
+// std::process::id() alone does not make a unique file name. Each test
+// adds its own name, so no two tests write the same file.
 fn convert_fixture(test_name: &str) -> lopdf::Document {
     convert_fixture_with_options(test_name, Options::new())
 }
@@ -207,7 +207,7 @@ impl Log for CancelAfter {
 #[test]
 fn cancellation_stops_in_flight_chapter_rendering() {
     // Chapters render across a pool of concurrent Chrome tabs (see
-    // render_chapters_parallel in pdf.rs) - this proves every worker
+    // render_chapters_parallel in pdf/render.rs). This proves every worker
     // actually stops polling the same shared cancellation flag instead of
     // running its whole chunk to completion once cancelled, using a real
     // multi-chapter book (minimal.epub only has 2 chapters, not enough to
@@ -231,12 +231,11 @@ fn cancellation_stops_in_flight_chapter_rendering() {
 
 #[test]
 fn typography_options_are_applied() {
-    // font_size_pt/line_spacing get injected as a !important CSS override
-    // on every chapter — assert indirectly via a distinctly large custom
-    // page + font combination still producing valid, readable output
-    // (a wrong/ignored font-size wouldn't itself be visible via text
-    // extraction, so this mainly guards against the injection breaking
-    // the chapter markup outright).
+    // font_size_pt and line_spacing become a !important CSS override on
+    // every chapter. Text extraction cannot see a font size, so this checks
+    // that the override does not break the chapter markup. The test
+    // `pdf_output_prints_the_prepared_markup_and_leaves_the_book_unchanged`
+    // checks that the prepared markup is what Chrome prints.
     let doc = convert_fixture_with_options(
         "typography",
         opts(&[

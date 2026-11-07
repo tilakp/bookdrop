@@ -4,7 +4,8 @@ use std::path::Path;
 use anyform_core::{ConvError, Log, Options, OutputPlugin};
 
 use crate::ir::{DocumentIR, TocNode};
-use crate::pdf::sniff_image_mime;
+use crate::markup::{data_uri, sniff_image_mime, xml_escape};
+use crate::options::{self, BookOptions};
 
 /// Self-contained HTML output: CSS inlined into one `<style>` block and
 /// images embedded as base64 `data:` URIs, so the file works offline and
@@ -12,8 +13,8 @@ use crate::pdf::sniff_image_mime;
 ///
 /// Resources are processed in sorted order, not `HashMap` order, so the
 /// output is the same on every run (see `rewrite_references`). The TOC is
-/// flat, one entry per spine item, even though `ir.toc` is a tree. Only an
-/// empty spine is an error; unreadable images, CSS or chapters are skipped.
+/// flat, one entry per spine item, even though `ir.toc` is a tree. A
+/// missing chapter is an error. Unreadable images and CSS are skipped.
 pub struct HtmlOutput;
 
 impl OutputPlugin<DocumentIR> for HtmlOutput {
@@ -25,12 +26,15 @@ impl OutputPlugin<DocumentIR> for HtmlOutput {
         "html"
     }
 
+    fn options(&self) -> &'static [&'static str] {
+        &[options::INCLUDE_COVER, options::GENERATE_TOC]
+    }
+
     fn convert(&self, ir: &DocumentIR, output: &Path, opts: &Options, log: &dyn Log) -> Result<(), ConvError> {
         if ir.spine.is_empty() {
             return Err(ConvError::NoChapters);
         }
-        let include_cover = opts.get_bool("include_cover", true);
-        let generate_toc = opts.get_bool("generate_table_of_contents", true);
+        let BookOptions { include_cover, generate_toc } = BookOptions::from_options(opts);
 
         let mut image_items: Vec<_> = ir.manifest.values().filter(|r| r.media_type.starts_with("image/")).collect();
         image_items.sort_by(|a, b| a.href.cmp(&b.href));
@@ -40,9 +44,7 @@ impl OutputPlugin<DocumentIR> for HtmlOutput {
                 log.info(&format!("skipping unreadable image: {}", item.href));
                 continue;
             };
-            use base64::Engine;
-            let encoded = base64::engine::general_purpose::STANDARD.encode(&bytes);
-            data_uris.insert(item.href.clone(), format!("data:{};base64,{}", item.media_type, encoded));
+            data_uris.insert(item.href.clone(), data_uri(&item.media_type, &bytes));
         }
 
         let mut css_items: Vec<_> = ir.manifest.values().filter(|r| r.media_type == "text/css").collect();
@@ -65,10 +67,8 @@ impl OutputPlugin<DocumentIR> for HtmlOutput {
 
         if include_cover {
             if let Some(cover) = &ir.metadata.cover {
-                use base64::Engine;
-                let encoded = base64::engine::general_purpose::STANDARD.encode(cover);
-                let mime = sniff_image_mime(cover);
-                body.push_str(&format!("<img class=\"bookdrop-cover\" src=\"data:{mime};base64,{encoded}\" alt=\"Cover\"/>\n"));
+                let src = data_uri(sniff_image_mime(cover), cover);
+                body.push_str(&format!("<img class=\"bookdrop-cover\" src=\"{src}\" alt=\"Cover\"/>\n"));
             }
         }
 
@@ -88,14 +88,7 @@ impl OutputPlugin<DocumentIR> for HtmlOutput {
             }
             log.progress(index as f64 / total as f64, &format!("Rendering chapter {}/{}", index + 1, total));
 
-            let Ok(bytes) = std::fs::read(ir.content_dir.join(&item.href)) else {
-                log.info(&format!("skipping unreadable chapter: {}", item.href));
-                continue;
-            };
-            let Ok(raw) = String::from_utf8(bytes) else {
-                log.info(&format!("skipping non-UTF8 chapter: {}", item.href));
-                continue;
-            };
+            let raw = ir.read_chapter(item)?;
             let inner = extract_body(&raw);
             body.push_str(&format!("<section id=\"chapter-{index}\">\n{}\n</section>\n", rewrite_references(inner, &data_uris)));
         }
@@ -107,9 +100,6 @@ impl OutputPlugin<DocumentIR> for HtmlOutput {
             title = xml_escape(&ir.metadata.title),
         );
 
-        if let Some(parent) = output.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
         std::fs::write(output, html)?;
         log.progress(1.0, "Done");
         Ok(())
@@ -200,9 +190,6 @@ fn toc_title<'a>(href: &str, nodes: &'a [TocNode]) -> Option<&'a str> {
     None
 }
 
-fn xml_escape(s: &str) -> String {
-    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
-}
 
 #[cfg(test)]
 mod tests {

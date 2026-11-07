@@ -9,7 +9,7 @@ enum PageSize: String, CaseIterable, Identifiable {
 
     var id: String { rawValue }
 
-    /// Points at 72dpi, portrait orientation. `.custom` has no fixed size —
+    /// Points at 72dpi, portrait orientation. `.custom` has no fixed size:
     /// callers read `PDFOptions.pageDimensions` instead, which falls back to
     /// the user-entered custom width/height for this case.
     var dimensions: CGSize? {
@@ -47,10 +47,8 @@ enum PageOrientation: String, CaseIterable, Identifiable {
 
 struct PDFOptions {
     var pageSize: PageSize = .usLetter
-    // Matches calibre's PDF Output default (`pdf_page_margin_*` = 72pt =
-    // 1in on all sides, confirmed against calibre/src/calibre/ebooks/
-    // conversion/plugins/pdf_output.py) — Bookdrop's own "wide" preset
-    // already happens to be exactly 72pt, so no new preset needed.
+    // calibre's PDF output default: 72 pt (1 in) on all sides
+    // (`pdf_page_margin_*` in calibre's pdf_output.py), the "wide" preset.
     var margins: PageMargins = .wide
     var orientation: PageOrientation = .portrait
     var includeCover = true
@@ -60,11 +58,10 @@ struct PDFOptions {
     var customPageWidthInches: Double = 8.5
     var customPageHeightInches: Double = 11
 
-    // Advanced — wired in M4.
+    // Advanced options.
     var fontFamily: String = "Original"
-    // Matches calibre's PDF Output default (`pdf_default_font_size` = 20,
-    // in CSS px — 20 * 72/96 = 15pt) — verified this is the actual source
-    // of calibre's "more spacious" look, not just wider margins alone.
+    // calibre's PDF output default: `pdf_default_font_size` = 20 CSS px,
+    // 20 * 72/96 = 15 pt. It gives calibre's more spacious look.
     var fontSizePt: Double = 15
     var lineSpacing: Double = 1.2
     var preserveEpubStyling = true

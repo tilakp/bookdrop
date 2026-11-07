@@ -42,8 +42,8 @@ final class MultiConversionModel: ObservableObject {
 
     /// Starts the batch. Returns the task so tests can await it.
     @discardableResult
-    func start(options: PDFOptions, format: OutputFormat, historyStore: HistoryStore) -> Task<Void, Never> {
-        let task = Task { await run(options: options, format: format, historyStore: historyStore) }
+    func start(options: PDFOptions, format: OutputFormat, conversions: ConversionService) -> Task<Void, Never> {
+        let task = Task { await run(options: options, format: format, conversions: conversions) }
         runTask = task
         return task
     }
@@ -55,9 +55,11 @@ final class MultiConversionModel: ObservableObject {
         runTask?.cancel()
     }
 
-    func run(options: PDFOptions, format: OutputFormat, historyStore: HistoryStore) async {
+    func run(options: PDFOptions, format: OutputFormat, conversions: ConversionService) async {
         isRunning = true
         defer { isRunning = false }
+        var converted: [(title: String, url: URL)] = []
+        defer { conversions.finish(converted: converted, format: format) }
 
         for index in jobs.indices {
             if isCancelled {
@@ -87,15 +89,10 @@ final class MultiConversionModel: ObservableObject {
                 let outputURL = nextAvailableURL(
                     directory: outputDirectory, baseName: sanitizedFilename(book.title),
                     extension: format.fileExtension)
-                let resultURL = try await RustConversionEngine.convert(
-                    book: book, options: options, outputURL: outputURL, progress: progress)
-
+                let resultURL = try await conversions.convert(
+                    book: book, format: format, options: options, outputURL: outputURL, progress: progress)
                 jobs[index].status = .done(resultURL)
-                historyStore.add(
-                    HistoryEntry(
-                        title: book.title,
-                        conversionLabel: "\(book.sourceURL.pathExtension.uppercased()) → \(format.rawValue)",
-                        outputPath: resultURL.path, sourcePath: sourceURL.path))
+                converted.append((book.title, resultURL))
             } catch {
                 let cancelled = isCancelled || error is CancellationError || (error as? EngineError)?.isCancellation == true
                 jobs[index].status = .failed(cancelled ? "Cancelled" : error.localizedDescription)

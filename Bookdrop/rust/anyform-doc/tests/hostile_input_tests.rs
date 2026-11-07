@@ -187,3 +187,44 @@ fn pdf_rendering_blocks_local_files_and_scripts() {
     assert!(!text.contains("SECRET-LOCAL-FILE"), "a local file outside the book must not be loaded");
     assert!(text.contains("SCRIPTS-OFF") && !text.contains("SCRIPTS-RAN"), "book scripts must not run");
 }
+
+/// Every file under `dir` with its bytes, for before/after comparison.
+fn snapshot(dir: &Path) -> std::collections::BTreeMap<PathBuf, Vec<u8>> {
+    let mut out = std::collections::BTreeMap::new();
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(d) = stack.pop() {
+        for entry in std::fs::read_dir(&d).unwrap() {
+            let path = entry.unwrap().path();
+            if path.is_dir() {
+                stack.push(path);
+            } else {
+                out.insert(path.clone(), std::fs::read(&path).unwrap());
+            }
+        }
+    }
+    out
+}
+
+#[test]
+fn pdf_output_prints_the_prepared_markup_and_leaves_the_book_unchanged() {
+    let scratch = Scratch::new("pdf-no-writes");
+    let book = scratch.path("book.epub");
+    let body = r#"<style>.hide { display: none; }</style><p class="hide">STYLED-AWAY</p><p>Visible.</p>"#;
+    write_epub(&book, "No Writes", &[("c1", "ch1.xhtml")], &[("OEBPS/ch1.xhtml", chapter(body))]);
+
+    let registry = anyform_doc::document_registry();
+    let ir = registry.parse(&book, &Options::new(), &StdLog).unwrap();
+    let book_root = ir.content_dir.parent().unwrap().to_path_buf();
+    let before = snapshot(&book_root);
+
+    // Stripping the book's styles shows the hidden paragraph. It appears
+    // only if Chrome printed the prepared markup, not the file on disk.
+    let mut opts = Options::new();
+    opts.set("remove_publisher_styling", anyform_core::Value::Bool(true));
+    let pdf = scratch.path("out.pdf");
+    registry.write(&ir, &pdf, &opts, &StdLog).unwrap();
+
+    assert_eq!(snapshot(&book_root), before, "PDF output must not change or add files in the book");
+    let text = pdf_text(&pdf, &scratch);
+    assert!(text.contains("STYLED-AWAY") && text.contains("Visible."), "prepared markup was not printed: {text}");
+}

@@ -5,6 +5,7 @@ use docx_rs::{Docx, Paragraph, Pic, Run, RunFonts, Style, StyleType};
 
 use crate::htmltext::{self, BlockKind};
 use crate::ir::DocumentIR;
+use crate::options::{self, BookOptions};
 
 /// Word (.docx) output, built with `docx-rs` from the blocks that
 /// `htmltext::extract_blocks` returns (the extractor `TxtOutput` also uses).
@@ -29,11 +30,15 @@ impl OutputPlugin<DocumentIR> for DocxOutput {
         "docx"
     }
 
+    fn options(&self) -> &'static [&'static str] {
+        &[options::INCLUDE_COVER]
+    }
+
     fn convert(&self, ir: &DocumentIR, output: &Path, opts: &Options, log: &dyn Log) -> Result<(), ConvError> {
         if ir.spine.is_empty() {
             return Err(ConvError::NoChapters);
         }
-        let include_cover = opts.get_bool("include_cover", true);
+        let include_cover = BookOptions::from_options(opts).include_cover;
 
         let mut docx = Docx::new();
         for level in 1..=6u8 {
@@ -72,18 +77,13 @@ impl OutputPlugin<DocumentIR> for DocxOutput {
             }
             log.progress(i as f64 / total as f64, &format!("Rendering chapter {} of {}", i + 1, total));
 
-            let path = ir.content_dir.join(&item.href);
-            let raw = std::fs::read_to_string(&path).map_err(|_| ConvError::MissingFile(item.href.clone()))?;
-            for block in htmltext::extract_blocks(&raw) {
+            for block in htmltext::extract_blocks(&ir.read_chapter(item)?) {
                 docx = docx.add_paragraph(paragraph_for_block(&block));
             }
             docx = docx.add_paragraph(Paragraph::new());
             docx = docx.add_paragraph(Paragraph::new());
         }
 
-        if let Some(parent) = output.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
         let file = std::fs::File::create(output)?;
         docx.pack(file).map_err(|e| ConvError::Other(format!("failed to write DOCX: {e}")))?;
         log.progress(1.0, "Done");

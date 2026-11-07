@@ -10,8 +10,7 @@ final class AppCoordinatorTests: XCTestCase {
     private func makeCoordinator() -> AppCoordinator {
         let history = HistoryStore(directory: scratchDir("history"))
         let settings = SettingsStore(defaults: scratchDefaults())
-        let coordinator = AppCoordinator(historyStore: history, settingsStore: settings)
-        coordinator.performSideEffects = false
+        let coordinator = AppCoordinator(historyStore: history, settingsStore: settings, sideEffects: RecordingSideEffects())
         return coordinator
     }
 
@@ -28,7 +27,7 @@ final class AppCoordinatorTests: XCTestCase {
     }
 
     /// Loads the fixture into `coordinator` and redirects its output directory to a
-    /// scratch folder — `handleFilesSelected` resets `outputDirectory` from settings as
+    /// scratch folder. `handleFilesSelected` resets `outputDirectory` from settings as
     /// part of loading, so the redirect must happen *after*, not before.
     private func loadFixture(into coordinator: AppCoordinator) async -> Book {
         await coordinator.handleFilesSelected([fixtureURL()])?.value
@@ -74,12 +73,33 @@ final class AppCoordinatorTests: XCTestCase {
 
     // MARK: - Duplicate detection
 
+    func testASingleBookNotifiesAndOpensTheFile() async {
+        let settings = SettingsStore(defaults: InMemoryKeyValueStore())
+        settings.showNotification = true
+        settings.openConvertedFile = true
+        settings.revealInFinder = false
+        let sideEffects = RecordingSideEffects()
+        let coordinator = AppCoordinator(
+            historyStore: HistoryStore(directory: scratchDir("h")), settingsStore: settings, sideEffects: sideEffects)
+        let book = await loadFixture(into: coordinator)
+
+        await coordinator.beginConvert(book: book)?.value
+
+        guard case .complete(let info) = coordinator.screen else {
+            return XCTFail("expected .complete, got \(coordinator.screen)")
+        }
+        XCTAssertEqual(sideEffects.notifications.map(\.bookTitles), [[book.title]])
+        XCTAssertEqual(sideEffects.opened, [info.outputURL])
+        XCTAssertTrue(sideEffects.revealed.isEmpty)
+        XCTAssertEqual(coordinator.historyStore.entries.count, 1)
+    }
+
     func testConvertWithNoCollisionStartsConversionDirectly() async {
         let coordinator = makeCoordinator()
         let book = await loadFixture(into: coordinator)
 
         let task = coordinator.beginConvert(book: book)
-        XCTAssertNotNil(task, "no existing file — should convert immediately, not prompt")
+        XCTAssertNotNil(task, "no existing file: should convert immediately, not prompt")
         guard case .converting = coordinator.screen else {
             XCTFail("expected .converting, got \(coordinator.screen)")
             return
@@ -98,7 +118,7 @@ final class AppCoordinatorTests: XCTestCase {
         try Data().write(to: candidate)
 
         let task = coordinator.beginConvert(book: book)
-        XCTAssertNil(task, "existing file — should prompt instead of converting")
+        XCTAssertNil(task, "existing file: should prompt instead of converting")
         guard case .duplicateConfirm(_, let filename) = coordinator.screen else {
             XCTFail("expected .duplicateConfirm, got \(coordinator.screen)")
             return
@@ -172,8 +192,7 @@ final class AppCoordinatorTests: XCTestCase {
         let history = HistoryStore(directory: scratchDir("history"))
         let settings = SettingsStore(defaults: scratchDefaults())
         settings.preserveOriginalStylingByDefault = false
-        let coordinator = AppCoordinator(historyStore: history, settingsStore: settings)
-        coordinator.performSideEffects = false
+        let coordinator = AppCoordinator(historyStore: history, settingsStore: settings, sideEffects: RecordingSideEffects())
 
         await coordinator.handleFilesSelected([fixtureURL()])?.value
         XCTAssertFalse(coordinator.pdfOptions.preserveEpubStyling)
@@ -183,8 +202,7 @@ final class AppCoordinatorTests: XCTestCase {
         let history = HistoryStore(directory: scratchDir("history"))
         let settings = SettingsStore(defaults: scratchDefaults())
         settings.defaultOutputLocation = .sameAsSource
-        let coordinator = AppCoordinator(historyStore: history, settingsStore: settings)
-        coordinator.performSideEffects = false
+        let coordinator = AppCoordinator(historyStore: history, settingsStore: settings, sideEffects: RecordingSideEffects())
 
         await coordinator.handleFilesSelected([fixtureURL()])?.value
         XCTAssertEqual(coordinator.outputDirectory.path, fixtureURL().deletingLastPathComponent().path)
@@ -233,7 +251,7 @@ final class AppCoordinatorTests: XCTestCase {
         XCTAssertEqual(book.sourceURL.path, sourceCopy.path, "test setup: source and candidate output must collide")
 
         let beginTask = coordinator.beginConvert(book: book)
-        XCTAssertNil(beginTask, "the source file already exists at the candidate path — should prompt, not convert directly")
+        XCTAssertNil(beginTask, "the source file already exists at the candidate path: should prompt, not convert directly")
         guard case .duplicateConfirm = coordinator.screen else {
             XCTFail("expected .duplicateConfirm, got \(coordinator.screen)")
             return
@@ -274,21 +292,20 @@ final class AppCoordinatorTests: XCTestCase {
 
     func testLastOutputFormatIsRemembered() {
         let settings = SettingsStore(defaults: InMemoryKeyValueStore())
-        let first = AppCoordinator(historyStore: HistoryStore(directory: scratchDir("h1")), settingsStore: settings)
+        let first = AppCoordinator(historyStore: HistoryStore(directory: scratchDir("h1")), settingsStore: settings, sideEffects: RecordingSideEffects())
         first.outputFormat = .docx
-        let second = AppCoordinator(historyStore: HistoryStore(directory: scratchDir("h2")), settingsStore: settings)
+        let second = AppCoordinator(historyStore: HistoryStore(directory: scratchDir("h2")), settingsStore: settings, sideEffects: RecordingSideEffects())
         XCTAssertEqual(second.outputFormat, .docx)
 
         settings.rememberLastOutputFormat = false
-        let third = AppCoordinator(historyStore: HistoryStore(directory: scratchDir("h3")), settingsStore: settings)
+        let third = AppCoordinator(historyStore: HistoryStore(directory: scratchDir("h3")), settingsStore: settings, sideEffects: RecordingSideEffects())
         XCTAssertEqual(third.outputFormat, .pdf)
     }
 
     func testAskEveryTimePromptsOncePerLoadedBook() async {
         let settings = SettingsStore(defaults: InMemoryKeyValueStore())
         settings.defaultOutputLocation = .askEveryTime
-        let coordinator = AppCoordinator(historyStore: HistoryStore(directory: scratchDir("h")), settingsStore: settings)
-        coordinator.performSideEffects = false
+        let coordinator = AppCoordinator(historyStore: HistoryStore(directory: scratchDir("h")), settingsStore: settings, sideEffects: RecordingSideEffects())
         await coordinator.handleFilesSelected([fixtureURL()])?.value
         XCTAssertTrue(coordinator.needsOutputDirectoryPrompt)
     }

@@ -1,10 +1,12 @@
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Command;
 
 use anyform_core::{ConvError, InputPlugin, Log, Options};
 
 use crate::epub::EpubInput;
 use crate::ir::DocumentIR;
+use crate::options;
+use crate::tools;
 
 /// Reads Kindle-family ebook formats (AZW3, KFX, MOBI) by normalizing them
 /// to EPUB with the bundled `boko` binary and then handing the result to
@@ -19,7 +21,7 @@ use crate::ir::DocumentIR;
 /// `fetch-chromium.sh` vendors the headless renderer.
 ///
 /// DRM is explicitly out of scope. Books bought from Amazon are encrypted,
-/// and this deliberately makes no attempt to decrypt them — it detects the
+/// and this deliberately makes no attempt to decrypt them. It detects the
 /// failure and reports it plainly (see [`describe_boko_failure`]) so the
 /// user gets a clear "this file is DRM-protected" message instead of a raw
 /// subprocess error. That is a different thing from the EPUB font
@@ -36,8 +38,12 @@ impl InputPlugin<DocumentIR> for KindleInput {
         &["azw3", "azw", "kfx", "mobi"]
     }
 
+    fn options(&self) -> &'static [&'static str] {
+        &[options::BOKO_PATH]
+    }
+
     fn convert(&self, input: &Path, opts: &Options, log: &dyn Log) -> Result<DocumentIR, ConvError> {
-        let boko = resolve_boko_path(opts)?;
+        let boko = tools::BOKO.resolve(opts)?;
         // Dropped (and deleted) at the end of this call: `EpubInput` extracts
         // the staged EPUB into its own work dir, which the IR then owns.
         let staging = anyform_core::fresh_work_dir("kindle-")?;
@@ -65,7 +71,7 @@ impl InputPlugin<DocumentIR> for KindleInput {
         log.progress(0.10, "Reading book structure");
         let mut ir = EpubInput.convert(&staged_epub, opts, log)?;
 
-        // Report the *original* file's size, not the intermediate EPUB's —
+        // Report the *original* file's size, not the intermediate EPUB's:
         // the size shown in the UI should describe the file the user
         // actually picked.
         ir.file_size_bytes = std::fs::metadata(input).map(|m| m.len()).unwrap_or(ir.file_size_bytes);
@@ -89,35 +95,3 @@ fn describe_boko_failure(stderr: &str) -> ConvError {
     })
 }
 
-/// Mirrors `resolve_chromium_path` in `pdf.rs`: an explicit option wins, then
-/// an env var, then the vendored dev-tree copy so `cargo test` and
-/// `anyform-cli` work without going through `build-app.sh`. The FFI layer
-/// always passes an explicit path pointing at the app-bundle resource.
-fn resolve_boko_path(opts: &Options) -> Result<PathBuf, ConvError> {
-    if let Some(p) = opts.get_str("boko_path") {
-        let path = PathBuf::from(p);
-        if path.exists() {
-            return Ok(path);
-        }
-    }
-    if let Ok(p) = std::env::var("ANYFORM_BOKO_PATH") {
-        let path = PathBuf::from(p);
-        if path.exists() {
-            return Ok(path);
-        }
-    }
-    let platform = if cfg!(target_arch = "aarch64") { "mac-arm64" } else { "mac-x64" };
-    let dev_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../vendor/boko")
-        .join(platform)
-        .join("boko");
-    if dev_path.exists() {
-        return Ok(dev_path);
-    }
-
-    Err(ConvError::ToolMissing(
-        "no bundled ebook converter found — set the \"boko_path\" option, \
-         ANYFORM_BOKO_PATH, or run scripts/fetch-boko.sh"
-            .into(),
-    ))
-}

@@ -1,4 +1,4 @@
-//! Reads PDFs: `pdfium.rs` extracts positioned text, `pdf_layout.rs`
+//! Reads PDFs: `pdfium.rs` extracts positioned text, `pdf_layout`
 //! rebuilds chapters, and this plugin writes them as XHTML files, so the IR
 //! looks like an extracted EPUB. Every output format then works for PDF
 //! input with no extra code.
@@ -14,6 +14,7 @@ use std::path::Path;
 use anyform_core::{ConvError, InputPlugin, Log, Options};
 
 use crate::ir::{DocumentIR, Metadata, Resource, SpineItem, TocNode};
+use crate::options;
 use crate::pdf_layout;
 use crate::pdfium::{self, DocumentProbe};
 
@@ -46,6 +47,10 @@ impl InputPlugin<DocumentIR> for PdfInput {
         &["pdf"]
     }
 
+    fn options(&self) -> &'static [&'static str] {
+        &[options::PDFIUM_PATH, options::PDF_FORCE_SINGLE_COLUMN]
+    }
+
     fn convert(&self, input: &Path, opts: &Options, log: &dyn Log) -> Result<DocumentIR, ConvError> {
         if log.is_cancelled() {
             return Err(ConvError::Cancelled);
@@ -56,7 +61,7 @@ impl InputPlugin<DocumentIR> for PdfInput {
         reject_if_scanned(&probe)?;
 
         log.progress(PROGRESS_EXTRACT_END, "Analyzing layout");
-        let force_single_column = opts.get_bool("pdf_force_single_column", false);
+        let force_single_column = opts.get_bool(options::PDF_FORCE_SINGLE_COLUMN, false);
         let title = resolve_title(&probe, input);
 
         let chapters = pdf_layout::build_chapters(&probe.pages, &probe.outline, &title, force_single_column, log)
