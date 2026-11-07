@@ -267,3 +267,23 @@ fn pdf_output_renders_chapters_with_hash_or_question_mark_in_the_file_name() {
     assert_eq!(file_uris, 0, "a link was left pointing at a local file");
     assert!(internal_links >= 1, "the link to one#a.xhtml did not become an internal jump");
 }
+
+#[test]
+fn markdown_output_copies_no_image_from_outside_the_book() {
+    let scratch = Scratch::new("md-outside");
+    let secret = scratch.path("secret.png");
+    std::fs::write(&secret, "SECRET").unwrap();
+    let book = scratch.path("book.epub");
+    let body = format!(
+        r#"<p>Text.</p><img src="../../../../../../../../{}"/><img src="file://{}"/><img src="ch1.xhtml"/>"#,
+        secret.display().to_string().trim_start_matches('/'),
+        secret.display()
+    );
+    write_epub(&book, "Outside", &[("c1", "ch1.xhtml")], &[("OEBPS/ch1.xhtml", chapter(&body))]);
+    let out_dir = scratch.path("out");
+    let md = out_dir.join("Book.md");
+    convert(&book, &md).unwrap();
+    let text = std::fs::read_to_string(&md).unwrap();
+    assert!(text.contains("Text.") && !text.contains("!["), "no image may be linked: {text}");
+    assert!(!out_dir.join("Book_images").exists(), "nothing may be copied");
+}

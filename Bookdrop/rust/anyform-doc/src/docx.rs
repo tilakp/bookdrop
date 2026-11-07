@@ -77,8 +77,9 @@ impl OutputPlugin<DocumentIR> for DocxOutput {
             }
             log.progress(i as f64 / total as f64, &format!("Rendering chapter {} of {}", i + 1, total));
 
-            for block in htmltext::extract_blocks(&ir.read_chapter(item)?) {
-                docx = docx.add_paragraph(paragraph_for_block(&block));
+            let blocks = htmltext::extract_blocks(&ir.read_chapter(item)?);
+            for block in blocks.iter().filter(|b| !matches!(b.kind, BlockKind::Image { .. })) {
+                docx = docx.add_paragraph(paragraph_for_block(block));
             }
             docx = docx.add_paragraph(Paragraph::new());
             docx = docx.add_paragraph(Paragraph::new());

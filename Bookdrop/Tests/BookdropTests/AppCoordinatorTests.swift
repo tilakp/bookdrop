@@ -309,4 +309,23 @@ final class AppCoordinatorTests: XCTestCase {
         await coordinator.handleFilesSelected([fixtureURL()])?.value
         XCTAssertTrue(coordinator.needsOutputDirectoryPrompt)
     }
+
+    func testAFolderWithoutItsFileIsNeverReplaced() async throws {
+        let coordinator = makeCoordinator()
+        let book = await loadFixture(into: coordinator)
+        coordinator.outputFormat = .markdown
+        let folder = coordinator.outputDirectory.appendingPathComponent("Minimal Fixture Book_images")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        try Data("user data".utf8).write(to: folder.appendingPathComponent("mine.txt"))
+
+        let task = coordinator.beginConvert(book: book)
+        XCTAssertNotNil(task, "only a folder is there: no prompt, keep both")
+        await task?.value
+
+        guard case .complete(let info) = coordinator.screen else {
+            return XCTFail("expected .complete, got \(coordinator.screen)")
+        }
+        XCTAssertEqual(info.outputURL.lastPathComponent, "Minimal Fixture Book (1).md")
+        XCTAssertEqual(try String(contentsOf: folder.appendingPathComponent("mine.txt"), encoding: .utf8), "user data")
+    }
 }

@@ -122,6 +122,9 @@ struct OutputFormatWire {
     name: &'static str,
     extension: &'static str,
     options: &'static [&'static str],
+    /// See `OutputPlugin::companion_suffix`. The host needs it to tell
+    /// whether an output name is free.
+    companion_suffix: Option<&'static str>,
 }
 
 #[derive(Serialize)]
@@ -132,7 +135,7 @@ struct FormatsWire {
 
 /// The formats the engine reads and writes, and the options each one
 /// reads: `{"inputs":[{"name","extensions","options"}],
-/// "outputs":[{"name","extension","options"}]}`. The host builds its list
+/// "outputs":[{"name","extension","options","companion_suffix"}]}`. The host builds its list
 /// of openable files and its option controls from this. The caller frees
 /// the string with `anyform_free_string`.
 #[no_mangle]
@@ -147,7 +150,12 @@ pub extern "C" fn anyform_formats() -> *mut c_char {
         outputs: registry
             .output_plugins()
             .iter()
-            .map(|p| OutputFormatWire { name: p.name(), extension: p.extension(), options: p.options() })
+            .map(|p| OutputFormatWire {
+                name: p.name(),
+                extension: p.extension(),
+                options: p.options(),
+                companion_suffix: p.companion_suffix(),
+            })
             .collect(),
     };
     string_to_c(serde_json::to_string(&formats).unwrap_or_else(|_| "{}".into()))
@@ -449,6 +457,10 @@ mod tests {
         let docx = json["outputs"].as_array().unwrap().iter().find(|f| f["name"] == "docx").unwrap();
         assert_eq!(docx["extension"], "docx");
         assert_eq!(docx["options"], serde_json::json!(["include_cover"]));
+        assert_eq!(docx["companion_suffix"], serde_json::Value::Null);
+        let markdown = json["outputs"].as_array().unwrap().iter().find(|f| f["name"] == "markdown").unwrap();
+        assert_eq!(markdown["extension"], "md");
+        assert_eq!(markdown["companion_suffix"], "_images");
     }
 
     #[test]

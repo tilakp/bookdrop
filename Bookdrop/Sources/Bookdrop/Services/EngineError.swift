@@ -27,6 +27,8 @@ struct EngineError: LocalizedError, Equatable, Decodable {
             return "Converting it would put the text in the wrong order."
         case "tool_missing":
             return "Part of Bookdrop is missing. Install Bookdrop again."
+        case "output_exists":
+            return "Rename or move that folder, or choose another folder to save to."
         default:
             return nil
         }

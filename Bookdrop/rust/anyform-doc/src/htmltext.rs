@@ -1,28 +1,36 @@
-//! Turns chapter XHTML into structured text for `txt.rs` and `docx.rs`.
+//! Turns chapter XHTML into structured text for `txt.rs`, `docx.rs` and
+//! `markdown.rs`.
 //! (`html.rs` and `epub_output.rs` keep the markup itself.)
 //!
 //! The main path parses with roxmltree (`epub::parse_xml`) and walks the
 //! DOM. Two things break it in real books: HTML named entities that no
 //! DOCTYPE declares (`&nbsp;`, `&mdash;`), and markup that is not well
-//! formed. A regex fallback handles both, but loses heading levels and
-//! bold/italic. That is acceptable for a rare path.
+//! formed. A regex fallback handles both, but loses heading levels,
+//! bold/italic and images. That is acceptable for a rare path.
 
 use std::sync::OnceLock;
 
 use regex::Regex;
 
+#[derive(Clone)]
 pub(crate) enum BlockKind {
     Heading(u8),
     Paragraph,
     ListItem,
     Blockquote,
     Preformatted,
+    /// An `<img>`, or an SVG `<image>`, with its `src` as written in the
+    /// chapter (not resolved) and its alt text. It has no runs.
+    Image { src: String, alt: String },
 }
 
 pub(crate) struct Run {
     pub text: String,
     pub bold: bool,
     pub italic: bool,
+    /// A `<br>`. Its text is "\n", like the whitespace in the source markup,
+    /// so this tells the two apart.
+    pub line_break: bool,
 }
 
 pub(crate) struct Block {
@@ -105,7 +113,7 @@ fn walk(node: roxmltree::Node, bold: bool, italic: bool, blocks: &mut Vec<Block>
                 if current.is_none() {
                     *current = Some(Block { kind: BlockKind::Paragraph, runs: Vec::new() });
                 }
-                current.as_mut().unwrap().runs.push(Run { text: text.to_string(), bold, italic });
+                current.as_mut().unwrap().runs.push(Run { text: text.to_string(), bold, italic, line_break: false });
             }
         }
         return;
@@ -119,8 +127,24 @@ fn walk(node: roxmltree::Node, bold: bool, italic: bool, blocks: &mut Vec<Block>
     }
     if tag == "br" {
         if let Some(b) = current.as_mut() {
-            b.runs.push(Run { text: "\n".to_string(), bold, italic });
+            b.runs.push(Run { text: "\n".to_string(), bold, italic, line_break: true });
         }
+        return;
+    }
+
+    if let Some(src) = image_source(node) {
+        // An image is its own block. Text after it continues in a new block
+        // of the same kind, so an image inside a list item or a heading does
+        // not turn the rest of it into a plain paragraph.
+        let open_kind = current.as_ref().map(|b| b.kind.clone());
+        if let Some(b) = current.take() {
+            if !b.runs.is_empty() {
+                blocks.push(b);
+            }
+        }
+        let alt = node.attribute("alt").unwrap_or("").to_string();
+        blocks.push(Block { kind: BlockKind::Image { src: src.to_string(), alt }, runs: Vec::new() });
+        *current = open_kind.map(|kind| Block { kind, runs: Vec::new() });
         return;
     }
 
@@ -156,6 +180,18 @@ fn walk(node: roxmltree::Node, bold: bool, italic: bool, blocks: &mut Vec<Block>
     // current bold/italic context, contributing to whatever block is open.
     for child in node.children() {
         walk(child, is_bold, is_italic, blocks, current);
+    }
+}
+
+const XLINK_NS: &str = "http://www.w3.org/1999/xlink";
+
+/// The image URL of an `<img src>` or an SVG `<image href>` (SVG 2) or
+/// `<image xlink:href>` (SVG 1.1, the usual cover-page form).
+fn image_source<'a>(node: roxmltree::Node<'a, '_>) -> Option<&'a str> {
+    match node.tag_name().name() {
+        "img" => node.attribute("src"),
+        "image" => node.attribute((XLINK_NS, "href")).or_else(|| node.attribute("href")),
+        _ => None,
     }
 }
 
@@ -244,7 +280,7 @@ fn blocks_from_fallback(html: &str) -> Vec<Block> {
         .split('\n')
         .map(|line| line.trim())
         .filter(|line| !line.is_empty())
-        .map(|line| Block { kind: BlockKind::Paragraph, runs: vec![Run { text: line.to_string(), bold: false, italic: false }] })
+        .map(|line| Block { kind: BlockKind::Paragraph, runs: vec![Run { text: line.to_string(), bold: false, italic: false, line_break: false }] })
         .collect()
 }
 
@@ -266,6 +302,37 @@ mod tests {
         assert!(!text.contains("var x"));
         assert!(!text.contains("color:red"));
         assert!(text.contains("Real text."));
+    }
+
+    fn image(block: &Block) -> Option<(&str, &str)> {
+        match &block.kind {
+            BlockKind::Image { src, alt } => Some((src.as_str(), alt.as_str())),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn images_become_their_own_blocks() {
+        let html = r#"<html xmlns="http://www.w3.org/1999/xhtml" xmlns:xlink="http://www.w3.org/1999/xlink"><body>
+            <div><img src="../images/a.png" alt="A diagram"/></div>
+            <svg xmlns="http://www.w3.org/2000/svg"><image xlink:href="cover.jpg"/></svg>
+            <svg xmlns="http://www.w3.org/2000/svg"><image href="svg2.png"/></svg>
+            </body></html>"#;
+        let blocks = extract_blocks(html);
+        let images: Vec<_> = blocks.iter().filter_map(image).collect();
+        assert_eq!(images, [("../images/a.png", "A diagram"), ("cover.jpg", ""), ("svg2.png", "")]);
+        assert_eq!(extract_text(html), "", "TXT output must not get text from an image");
+    }
+
+    #[test]
+    fn text_after_an_image_keeps_its_block_kind() {
+        let html = r#"<html><body><ul><li>before <img src="i.png"/> after</li></ul></body></html>"#;
+        let blocks = extract_blocks(html);
+        assert_eq!(blocks.len(), 3);
+        assert!(matches!(blocks[0].kind, BlockKind::ListItem));
+        assert_eq!(image(&blocks[1]), Some(("i.png", "")));
+        assert!(matches!(blocks[2].kind, BlockKind::ListItem));
+        assert_eq!(blocks[2].text().trim(), "after");
     }
 
     #[test]

@@ -94,9 +94,13 @@ final class AppCoordinator: ObservableObject {
         if FileManager.default.fileExists(atPath: candidate.path) {
             screen = .duplicateConfirm(book: book, filename: candidate.lastPathComponent)
             return nil
-        } else {
-            return startConversion(book: book, outputURL: candidate)
         }
+        if outputNameIsTaken(candidate, companionSuffix: outputFormat.companionSuffix) {
+            // Only the companion folder is there, without its file, so it is
+            // not from an earlier conversion. Never replace it: keep both.
+            return startConversion(book: book, outputURL: keepBothURL(for: book))
+        }
+        return startConversion(book: book, outputURL: candidate)
     }
 
     @discardableResult
@@ -114,18 +118,18 @@ final class AppCoordinator: ObservableObject {
             // original. Keep both instead: the conversion is still the one
             // that was asked for, only not an overwrite.
             if isSameFile(url, book.sourceURL) {
-                let keepBothURL = nextAvailableURL(
-                    directory: outputDirectory, baseName: sanitizedFilename(book.title),
-                    extension: outputFormat.fileExtension)
-                return startConversion(book: book, outputURL: keepBothURL)
+                return startConversion(book: book, outputURL: keepBothURL(for: book))
             }
             return startConversion(book: book, outputURL: url)
         case .keepBoth:
-            let url = nextAvailableURL(
-                directory: outputDirectory, baseName: sanitizedFilename(book.title),
-                extension: outputFormat.fileExtension)
-            return startConversion(book: book, outputURL: url)
+            return startConversion(book: book, outputURL: keepBothURL(for: book))
         }
+    }
+
+    private func keepBothURL(for book: Book) -> URL {
+        nextAvailableURL(
+            directory: outputDirectory, baseName: sanitizedFilename(book.title),
+            extension: outputFormat.fileExtension, companionSuffix: outputFormat.companionSuffix)
     }
 
     /// Compares resolved, standardized paths, not plain strings, so that

@@ -26,5 +26,13 @@ final class EngineFormatsTests: XCTestCase {
         XCTAssertTrue(OutputFormat.docx.supportsCover)
         XCTAssertFalse(OutputFormat.docx.supportsTableOfContents, "DOCX output has no TOC")
         XCTAssertFalse(OutputFormat.epub.supportsCover || OutputFormat.txt.supportsCover)
+        XCTAssertTrue(OutputFormat.markdown.supportsCover)
+        XCTAssertFalse(OutputFormat.markdown.hasPdfOptions || OutputFormat.markdown.supportsTableOfContents)
+    }
+
+    func testOnlyMarkdownWritesACompanionFolder() {
+        for format in OutputFormat.allCases {
+            XCTAssertEqual(format.companionSuffix, format == .markdown ? "_images" : nil, "\(format)")
+        }
     }
 }

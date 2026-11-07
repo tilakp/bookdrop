@@ -30,7 +30,7 @@ typedef struct AnyformCancelToken AnyformCancelToken;
 /**
  * The formats the engine reads and writes, and the options each one
  * reads: `{"inputs":[{"name","extensions","options"}],
- * "outputs":[{"name","extension","options"}]}`. The host builds its list
+ * "outputs":[{"name","extension","options","companion_suffix"}]}`. The host builds its list
  * of openable files and its option controls from this. The caller frees
  * the string with `anyform_free_string`.
  */

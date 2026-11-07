@@ -88,7 +88,7 @@ final class MultiConversionModel: ObservableObject {
                 let book = try await BookLoader.load(sourceURL)
                 let outputURL = nextAvailableURL(
                     directory: outputDirectory, baseName: sanitizedFilename(book.title),
-                    extension: format.fileExtension)
+                    extension: format.fileExtension, companionSuffix: format.companionSuffix)
                 let resultURL = try await conversions.convert(
                     book: book, format: format, options: options, outputURL: outputURL, progress: progress)
                 jobs[index].status = .done(resultURL)

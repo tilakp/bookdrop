@@ -6,6 +6,7 @@ enum OutputFormat: String, CaseIterable, Identifiable {
     case txt = "TXT"
     case html = "HTML"
     case docx = "DOCX"
+    case markdown = "Markdown"
 
     var id: String { rawValue }
 
@@ -16,6 +17,7 @@ enum OutputFormat: String, CaseIterable, Identifiable {
         case .txt: return "txt"
         case .html: return "html"
         case .docx: return "docx"
+        case .markdown: return "md"
         }
     }
 
@@ -27,4 +29,10 @@ enum OutputFormat: String, CaseIterable, Identifiable {
     var supportsTableOfContents: Bool { engineOptions.contains("generate_table_of_contents") }
     /// Page size, margins, typography, headers and footers.
     var hasPdfOptions: Bool { engineOptions.contains("page_width_in") }
+
+    /// The suffix of the folder this format writes next to its file
+    /// ("_images" for Markdown), or nil if it writes only the file.
+    var companionSuffix: String? {
+        EngineFormats.shared.outputs.first { $0.extension == fileExtension }?.companionSuffix
+    }
 }

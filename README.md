@@ -5,14 +5,15 @@
 <h1 align="center">Bookdrop</h1>
 
 <p align="center">
-  Drag in an EPUB, Kindle book, or PDF — get back a PDF, EPUB, TXT, HTML, or DOCX.<br>
+  Drag in an EPUB, Kindle book, or PDF — get back a PDF, EPUB, TXT, HTML, DOCX, or Markdown.<br>
   PDF conversion runs on bundled headless Chromium.
 </p>
 
 ## What it does
 
 Drop a book onto the window (or use the file picker) — EPUB, AZW3/AZW/KFX/MOBI, or PDF — and
-Bookdrop converts it to your choice of PDF, EPUB, TXT, HTML, or DOCX. For PDF output
+Bookdrop converts it to your choice of PDF, EPUB, TXT, HTML, DOCX, or Markdown. Markdown
+output is a `.md` file plus a `Book_images/` folder next to it with the book's images. For PDF output
 specifically, you get real control over the result: page size (US Letter, A4, A5, or custom),
 margins, orientation, typography (font, size, line spacing), headers/footers/page numbers, cover
 inclusion, and table-of-contents generation, all live-previewed against the actual book.
@@ -67,7 +68,7 @@ PDF's own bookmarks. For PDF *output*, each chapter renders through a bundled, s
 headless Chromium build via the DevTools Protocol — the same class of approach calibre's PDF
 output uses, rather than reimplementing HTML/CSS layout from scratch — and pages are merged with
 `lopdf` into one document with a real outline built from the book's table of contents. EPUB/TXT/
-HTML/DOCX output are pure Rust, no external engine. The Swift app talks to all of this through a
+HTML/DOCX/Markdown output are pure Rust, no external engine. The Swift app talks to all of this through a
 small C ABI (`anyform-ffi`).
 
 See [`ANYFORM-FULL-SPEC.md`](ANYFORM-FULL-SPEC.md) for the full architecture writeup, the known
@@ -91,7 +92,7 @@ swift build
 swift test
 ```
 
-52 Swift tests plus 125 Rust tests. Most of the PDF-related ones render through the real bundled
+56 Swift tests plus 141 Rust tests. Most of the PDF-related ones render through the real bundled
 Chromium binary (or read through the real bundled PDF reader) rather than mocking it, so expect
 the suite to take about 30 seconds.
 
@@ -113,7 +114,7 @@ thing, or to produce your own DMG:
   the conversion service, app coordinator), `Views/`, `App/`
 - `Bookdrop/Sources/CAnyform/`: the C header bridge SwiftPM links against the Rust engine through
 - `Bookdrop/rust/`: the `anyform` engine. `anyform-core` (traits/registry), `anyform-doc` (EPUB/
-  Kindle-family/PDF input, PDF/EPUB/TXT/HTML/DOCX output), `anyform-ffi` (the C ABI Swift calls),
+  Kindle-family/PDF input, PDF/EPUB/TXT/HTML/DOCX/Markdown output), `anyform-ffi` (the C ABI Swift calls),
   `anyform-cli` (a standalone `anyform convert book.epub book.pdf` binary for testing the engine
   in isolation)
 - `Bookdrop/Tests/BookdropTests/`: the Swift test suite. `Bookdrop/rust/*/tests/`: the Rust one

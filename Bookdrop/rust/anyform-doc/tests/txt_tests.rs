@@ -96,7 +96,7 @@ fn every_plugin_declares_its_options_and_plugins_are_listed_once() {
     let inputs: Vec<_> = registry.input_plugins().iter().map(|p| p.name()).collect();
     assert_eq!(inputs, ["epub", "kindle", "pdf"]);
     let outputs: Vec<_> = registry.output_plugins().iter().map(|p| p.name()).collect();
-    assert_eq!(outputs, ["docx", "epub", "html", "pdf", "txt"]);
+    assert_eq!(outputs, ["docx", "epub", "html", "markdown", "pdf", "txt"]);
     let html = registry.output_plugins().into_iter().find(|p| p.name() == "html").unwrap();
     assert_eq!(html.options(), ["include_cover", "generate_table_of_contents"]);
 }

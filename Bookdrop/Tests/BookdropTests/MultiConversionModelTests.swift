@@ -208,4 +208,26 @@ final class MultiConversionModelTests: XCTestCase {
         }
         XCTAssertTrue(model.isFinished)
     }
+
+    func testConvertsToMarkdownWithAnImagesFolder() async throws {
+        let outputDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("MultiConversionModelTests-\(UUID().uuidString)")
+        let history = HistoryStore(directory: outputDir.appendingPathComponent("history"))
+        let model = MultiConversionModel(urls: [fixtureURL()], outputDirectory: outputDir)
+
+        await model.run(options: PDFOptions(), format: .markdown, conversions: makeConversions(history))
+
+        guard case .done(let url) = model.jobs[0].status else {
+            return XCTFail("expected job to be done, got \(model.jobs[0].status)")
+        }
+        XCTAssertEqual(url.lastPathComponent, "Minimal Fixture Book.md")
+        let text = try String(contentsOf: url, encoding: .utf8)
+        XCTAssertTrue(text.hasPrefix("# Minimal Fixture Book"))
+        XCTAssertTrue(text.contains("![Cover](Minimal%20Fixture%20Book_images/"), text)
+        var isDirectory: ObjCBool = false
+        XCTAssertTrue(
+            FileManager.default.fileExists(
+                atPath: outputDir.appendingPathComponent("Minimal Fixture Book_images").path, isDirectory: &isDirectory)
+                && isDirectory.boolValue)
+    }
 }

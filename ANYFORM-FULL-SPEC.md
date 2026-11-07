@@ -97,8 +97,8 @@ limitations of EPUB-out (non-linear spine items; source `dc:identifier`).
   which does it automatically).
 - Build the Rust engine: `cd Bookdrop/rust && cargo test` (needs
   `scripts/fetch-chromium.sh`/`scripts/fetch-pdfium.sh` run once first for
-  the PDF-output/PDF-input tests): 125 tests.
-- Test: `swift test`: 52 tests (~40s, mostly real Rust/Chromium PDF
+  the PDF-output/PDF-input tests): 141 tests.
+- Test: `swift test`: 56 tests (~40s, mostly real Rust/Chromium PDF
   renders now, not mocked), all use scratch directories / an in-memory
   `KeyValueStore` so they never touch real user data.
 - Run as a real `.app` bundle — needed for the Dock icon, system
@@ -127,10 +127,17 @@ limitations of EPUB-out (non-linear spine items; source `dc:identifier`).
   `kindle.rs` (normalized to EPUB by the bundled `boko`), `pdf_input.rs`
   (bundled pdfium, chapters rebuilt by the `pdf_layout/` heuristics).
   Output: `pdf/` (bundled headless Chromium), `epub_output.rs`, `txt.rs`,
-  `html.rs`, `docx.rs`. `options.rs` names every option. Each plugin lists
+  `html.rs`, `docx.rs`, `markdown.rs`. `options.rs` names every option. Each plugin lists
   the options it reads, and the registry refuses all others. `tools.rs`
   finds the bundled programs. `DocumentIR::read_chapter` is the one way
   output plugins read chapter markup.
+- An output plugin may declare one companion folder
+  (`OutputPlugin::companion_suffix`): Markdown writes `Book.md` plus
+  `Book_images/`. `Registry::write` stages the file and the folder in a
+  temporary folder and moves both into place only on success. Replacing
+  the file replaces its folder. A folder that exists without its file is
+  never replaced (`output_exists`); the app picks a "keep both" name
+  instead.
 - Output plugins only read the IR. PDF output serves each prepared
   chapter to Chrome from memory at the chapter's own `file://` URL
   (request interception), so footnote links still resolve and the book's

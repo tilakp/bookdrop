@@ -16,6 +16,12 @@ struct EngineFormats: Decodable {
         let name: String
         let `extension`: String
         let options: [String]
+        let companionSuffix: String?
+
+        enum CodingKeys: String, CodingKey {
+            case name, `extension`, options
+            case companionSuffix = "companion_suffix"
+        }
     }
 
     let inputs: [Input]
